@@ -47,22 +47,27 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=poll_interval),
+            update_interval=timedelta(seconds=poll_interval) if poll_interval > 0 else None,
         )
         self._client = client
         self.device_info: ER605DeviceInfo | None = None
 
         # Tier 2 (medium) time-based cache
-        self._medium_poll_interval = medium_poll_interval
+        self._medium_poll_interval = medium_poll_interval  # 0 = manual only
         self._medium_last_fetch: float = 0.0
         self._medium_cache_interfaces: list[ER605InterfaceData] = []
         self._medium_cache_ipv6: list[ER605Ipv6InterfaceData] = []
         self._medium_cache_uptime: int = 0
 
         # Tier 3 (slow / ipstats) time-based cache
-        self._ipstats_poll_interval = ipstats_poll_interval  # 0 = disabled
+        self._ipstats_poll_interval = ipstats_poll_interval  # 0 = manual only
         self._ipstats_last_fetch: float = 0.0
         self._ipstats_cache: list[ER605IpstatEntry] = []
+        self.ipstats_generation: int = 0
+
+        # Manual refresh flags — set by service calls, consumed by _fetch_all
+        self._force_medium: bool = False
+        self._force_ipstats: bool = False
 
     # ── Setup (called once by __init__.py after coordinator is created) ───────
 
@@ -99,6 +104,28 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
         except HttpError as err:
             raise UpdateFailed(f"ER605 update failed: {err}") from err
 
+    # ── Per-tier manual refresh (called by HA services) ───────────────────────
+
+    async def async_refresh_fast(self) -> None:
+        """Force a Tier 1 (fast) refresh — triggers a full coordinator poll."""
+        await self.async_request_refresh()
+
+    async def async_refresh_medium(self) -> None:
+        """Force a Tier 2 (medium) refresh on the next poll cycle."""
+        self._force_medium = True
+        await self.async_request_refresh()
+
+    async def async_refresh_ipstats(self) -> None:
+        """Force a Tier 3 (ipstats) refresh on the next poll cycle."""
+        self._force_ipstats = True
+        await self.async_request_refresh()
+
+    async def async_refresh_all(self) -> None:
+        """Force all three tiers to refresh on the next poll cycle."""
+        self._force_medium = True
+        self._force_ipstats = True
+        await self.async_request_refresh()
+
     # ── Internal ──────────────────────────────────────────────────────────────
 
     async def _login(self) -> None:
@@ -117,8 +144,12 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
         ports_raw  = await self._client.get_switch_state()
         ifstat_raw = await self._client.get_ifstat()
 
-        # ── Tier 2: MEDIUM — on its own time-based interval ──
-        if now - self._medium_last_fetch >= self._medium_poll_interval:
+        # ── Tier 2: MEDIUM — on its own time-based interval (0 = manual only) ──
+        run_medium = self._force_medium
+        self._force_medium = False
+        if not run_medium and self._medium_poll_interval > 0:
+            run_medium = (now - self._medium_last_fetch >= self._medium_poll_interval)
+        if run_medium:
             self._medium_last_fetch = now
             try:
                 iface_raw  = await self._client.get_interfaces()
@@ -130,15 +161,19 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("Medium-tier fetch failed, using cached data: %s", err)
 
-        # ── Tier 3: SLOW — ipstats on its own time-based interval (0 = disabled) ──
-        if self._ipstats_poll_interval > 0:
-            if now - self._ipstats_last_fetch >= self._ipstats_poll_interval:
-                self._ipstats_last_fetch = now
-                try:
-                    ipstats_raw = await self._client.get_ipstats()
-                    self._ipstats_cache = _parse_ipstats(ipstats_raw)
-                except Exception as err:  # noqa: BLE001
-                    _LOGGER.debug("ipstats fetch failed, using cached data: %s", err)
+        # ── Tier 3: SLOW — ipstats on its own time-based interval (0 = manual only) ──
+        run_ipstats = self._force_ipstats
+        self._force_ipstats = False
+        if not run_ipstats and self._ipstats_poll_interval > 0:
+            run_ipstats = (now - self._ipstats_last_fetch >= self._ipstats_poll_interval)
+        if run_ipstats:
+            self._ipstats_last_fetch = now
+            try:
+                ipstats_raw = await self._client.get_ipstats()
+                self._ipstats_cache = _parse_ipstats(ipstats_raw)
+                self.ipstats_generation += 1
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("ipstats fetch failed, using cached data: %s", err)
 
         return ER605RouterData(
             uptime_seconds = self._medium_cache_uptime,

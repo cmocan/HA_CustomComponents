@@ -6,8 +6,8 @@ DOMAIN = "er605"
 CONF_POLL_INTERVAL = "poll_interval"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
-DEFAULT_POLL_INTERVAL = 5    # seconds
-MIN_POLL_INTERVAL     = 1
+DEFAULT_POLL_INTERVAL = 5    # seconds (0 = disabled / manual only)
+MIN_POLL_INTERVAL     = 0
 MAX_POLL_INTERVAL     = 300
 DEFAULT_TIMEOUT       = 10   # seconds per HTTP request
 
@@ -30,8 +30,8 @@ API_IPSTATS       = "admin/ipstats?form=list"
 
 # ── Polling tunables ───────────────────────────────────────────────────────────
 CONF_MEDIUM_POLL_INTERVAL       = "medium_poll_interval"
-DEFAULT_MEDIUM_POLL_INTERVAL    = 30    # seconds
-MIN_MEDIUM_POLL_INTERVAL        = 5     # seconds
+DEFAULT_MEDIUM_POLL_INTERVAL    = 30    # seconds (0 = disabled / manual only)
+MIN_MEDIUM_POLL_INTERVAL        = 0     # seconds
 MAX_MEDIUM_POLL_INTERVAL        = 300   # 5 minutes
 
 CONF_IPSTATS_POLL_INTERVAL    = "ipstats_poll_interval"

@@ -50,8 +50,8 @@
           "ipstats_poll_interval": "IP stats poll interval (seconds)"
         },
         "data_description": {
-          "poll_interval": "Tier 1 — CPU, memory, traffic rates, port state (1–300 s, default 5).",
-          "medium_poll_interval": "Tier 2 — IP addresses, gateway, DNS, IPv6, uptime (5–300 s, default 30).",
+          "poll_interval": "Tier 1 — CPU, memory, traffic rates, port state (5–300 s, default 5). Set to 0 to disable automatic polling.",
+          "medium_poll_interval": "Tier 2 — IP addresses, gateway, DNS, IPv6, uptime (5–300 s, default 30). Set to 0 to disable.",
           "ipstats_poll_interval": "Tier 3 — Per-IP client analytics (5–86 400 s, default 150). Set to 0 to disable."
         }
       }

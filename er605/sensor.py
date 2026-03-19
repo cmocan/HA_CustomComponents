@@ -103,10 +103,16 @@ async def async_setup_entry(
     for desc in SYSTEM_SENSORS:
         entities.append(ER605SystemSensor(coordinator, entry.entry_id, desc))
 
-    # Per-WAN sensors
-    for iface in coordinator.data.wan_interfaces:
-        wan_key = iface.entity_key   # e.g. "wan1"
-        label   = iface.label        # e.g. "WAN1"
+    # Per-WAN sensors — driven by device_info.wan_ports (stable, always complete)
+    active_indices = set(dev_info.active_wan_indices)
+    wan_ports = [
+        p for p in dev_info.wan_ports if p.index in active_indices
+    ]
+
+    for port in wan_ports:
+        wan_name = f"WAN{port.index}"          # t_name used by interface API
+        wan_key  = wan_name.lower()             # "wan1", "wan2"
+        label    = port.name                    # "WAN1", "WAN/LAN2"
 
         entities.extend([
             ER605WANSensor(
@@ -115,7 +121,7 @@ async def async_setup_entry(
                     key           = f"{wan_key}_ip",
                     name          = f"{label} IP Address",
                     icon          = "mdi:ip-network",
-                    interface_key = iface.name,
+                    interface_key = wan_name,
                 ),
             ),
             ER605WANSensor(
@@ -124,7 +130,7 @@ async def async_setup_entry(
                     key           = f"{wan_key}_gateway",
                     name          = f"{label} Gateway",
                     icon          = "mdi:router-network",
-                    interface_key = iface.name,
+                    interface_key = wan_name,
                 ),
             ),
             ER605WANSensor(
@@ -133,7 +139,7 @@ async def async_setup_entry(
                     key           = f"{wan_key}_dns",
                     name          = f"{label} DNS",
                     icon          = "mdi:dns",
-                    interface_key = iface.name,
+                    interface_key = wan_name,
                 ),
             ),
             ER605IPv6Sensor(
@@ -142,7 +148,7 @@ async def async_setup_entry(
                     key           = f"{wan_key}_ipv6_address",
                     name          = f"{label} IPv6 Address",
                     icon          = "mdi:ip-network-outline",
-                    interface_key = iface.name,
+                    interface_key = wan_name,
                 ),
             ),
         ])
@@ -239,6 +245,8 @@ class ER605SystemSensor(ER605Entity, SensorEntity):
         super().__init__(coordinator, entry_id)
         self.entity_description = description
         self._attr_unique_id = f"{entry_id}_{description.key}"
+        self._cached_attrs: dict[str, Any] | None = None
+        self._cached_gen: int = -1
 
     @property
     def native_value(self) -> Any:
@@ -262,13 +270,19 @@ class ER605SystemSensor(ER605Entity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any] | None:
         key = self.entity_description.key
         if key == "lan_clients_total":
-            pool = self.coordinator.data.lan_clients
+            pool_fn = lambda: self.coordinator.data.lan_clients  # noqa: E731
         elif key == "lan_clients_active":
-            pool = self.coordinator.data.active_lan_clients
+            pool_fn = lambda: self.coordinator.data.active_lan_clients  # noqa: E731
         else:
             return None
+
+        gen = self.coordinator.ipstats_generation
+        if self._cached_gen == gen and self._cached_attrs is not None:
+            return self._cached_attrs
+
+        pool = pool_fn()
         top = sorted(pool, key=lambda e: e.rx_bps + e.tx_bps, reverse=True)[:IPSTATS_TOP_N]
-        return {
+        self._cached_attrs = {
             "clients": [
                 {
                     "addr":     e.addr,
@@ -282,6 +296,8 @@ class ER605SystemSensor(ER605Entity, SensorEntity):
             "total_clients": len(pool),
             "top_n": IPSTATS_TOP_N,
         }
+        self._cached_gen = gen
+        return self._cached_attrs
 
 
 class ER605WANSensor(ER605Entity, SensorEntity):

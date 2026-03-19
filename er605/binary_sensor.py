@@ -42,31 +42,42 @@ async def async_setup_entry(
 
     entities: list[ER605Entity] = []
 
-    # One WAN connectivity sensor per discovered WAN interface
-    for iface in coordinator.data.wan_interfaces:
+    # One WAN connectivity + IPv6 sensor per active WAN port.
+    # Use device_info.wan_ports (fetched once at setup, always complete)
+    # instead of coordinator.data.wan_interfaces (may be empty if Tier 2
+    # hasn't run yet).
+    dev_info = runtime.device_info
+    active_indices = set(dev_info.active_wan_indices)
+    wan_ports = [
+        p for p in dev_info.wan_ports if p.index in active_indices
+    ]
+
+    for port in wan_ports:
+        wan_name = f"WAN{port.index}"          # t_name used by interface API
+        wan_key  = wan_name.lower()             # "wan1", "wan2"
+        label    = port.name                    # "WAN1", "WAN/LAN2"
+
         entities.append(
             ER605WANConnectivitySensor(
                 coordinator,
                 entry.entry_id,
                 ER605BinaryEntityDescription(
-                    key              = f"{iface.entity_key}_connected",
-                    name             = f"{iface.label} Connected",
+                    key              = f"{wan_key}_connected",
+                    name             = f"{label} Connected",
                     device_class     = BinarySensorDeviceClass.CONNECTIVITY,
-                    interface_key    = iface.name,
+                    interface_key    = wan_name,
                 ),
             )
         )
 
-    # One IPv6 enabled sensor per WAN with IPv6 data
-    for ipv6 in coordinator.data.ipv6_interfaces:
         entities.append(
             ER605IPv6EnabledSensor(
                 coordinator,
                 entry.entry_id,
                 ER605BinaryEntityDescription(
-                    key           = f"{ipv6.name.lower()}_ipv6_enabled",
-                    name          = f"{ipv6.label} IPv6 Enabled",
-                    interface_key = ipv6.name,
+                    key           = f"{wan_key}_ipv6_enabled",
+                    name          = f"{label} IPv6 Enabled",
+                    interface_key = wan_name,
                 ),
             )
         )

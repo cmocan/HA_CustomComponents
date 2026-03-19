@@ -1,0 +1,19 @@
+refresh_fast:
+  name: Refresh fast tier
+  description: >-
+    Trigger a Tier 1 (fast) refresh — CPU, memory, traffic rates, switch port state.
+
+refresh_medium:
+  name: Refresh medium tier
+  description: >-
+    Trigger a Tier 2 (medium) refresh — IP addresses, gateway, DNS, IPv6, uptime.
+
+refresh_ipstats:
+  name: Refresh IP stats
+  description: >-
+    Trigger a Tier 3 (ipstats) refresh — per-IP client traffic analytics.
+
+refresh_all:
+  name: Refresh all tiers
+  description: >-
+    Trigger a full refresh of all three polling tiers at once.

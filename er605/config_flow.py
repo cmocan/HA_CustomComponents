@@ -217,15 +217,15 @@ class ER605OptionsFlow(config_entries.OptionsFlow):
                 {
                     vol.Required(CONF_POLL_INTERVAL, default=current_interval): vol.All(
                         vol.Coerce(int),
-                        vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL),
+                        _zero_or_range(5, MAX_POLL_INTERVAL),
                     ),
                     vol.Required(CONF_MEDIUM_POLL_INTERVAL, default=current_medium): vol.All(
                         vol.Coerce(int),
-                        vol.Range(min=MIN_MEDIUM_POLL_INTERVAL, max=MAX_MEDIUM_POLL_INTERVAL),
+                        _zero_or_range(5, MAX_MEDIUM_POLL_INTERVAL),
                     ),
                     vol.Required(CONF_IPSTATS_POLL_INTERVAL, default=current_ipstats): vol.All(
                         vol.Coerce(int),
-                        vol.Range(min=0, max=MAX_IPSTATS_POLL_INTERVAL),
+                        _zero_or_range(5, MAX_IPSTATS_POLL_INTERVAL),
                     ),
                 }
             ),
@@ -244,3 +244,14 @@ def _extract_unique_id(ifaces: list[dict]) -> str:
         if iface.get("macaddr"):
             return iface["macaddr"].replace("-", "").lower()
     return ""
+
+
+def _zero_or_range(min_val: int, max_val: int):
+    """Validate: value must be 0 (disabled) or between min_val and max_val."""
+    def _validate(value: int) -> int:
+        if value == 0:
+            return value
+        if min_val <= value <= max_val:
+            return value
+        raise vol.Invalid(f"Must be 0 (disabled) or between {min_val} and {max_val}")
+    return _validate
