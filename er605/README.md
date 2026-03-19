@@ -168,7 +168,7 @@ Zones: `WAN1`, `WAN2`, and all LAN zones reported by the router.
 | LAN IP traffic stats (`ipstats`) | Every 5 cycles (~2.5 min at 30 s) |
 
 The slow poll for ipstats avoids hammering the router — it caches the last result between cycles.  
-Both intervals can be tuned: poll interval via the options flow; the multiplier via `IPSTATS_POLL_EVERY` in `const.py`.
+Both intervals can be tuned via the options flow: the main poll interval and the IP stats poll interval (0 = disabled).
 
 ---
 

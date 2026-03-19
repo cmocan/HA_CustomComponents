@@ -10,7 +10,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DEFAULT_POLL_INTERVAL, DOMAIN, IPSTATS_POLL_EVERY
+from .const import (
+    DEFAULT_IPSTATS_POLL_INTERVAL,
+    DEFAULT_MEDIUM_POLL_INTERVAL,
+    DEFAULT_POLL_INTERVAL,
+    DOMAIN,
+)
 from .data import (
     ER605DeviceInfo,
     ER605IfstatEntry,
@@ -35,6 +40,8 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
         hass: HomeAssistant,
         client: ER605HttpClient,
         poll_interval: int = DEFAULT_POLL_INTERVAL,
+        medium_poll_interval: int = DEFAULT_MEDIUM_POLL_INTERVAL,
+        ipstats_poll_interval: int = DEFAULT_IPSTATS_POLL_INTERVAL,
     ) -> None:
         super().__init__(
             hass,
@@ -44,7 +51,17 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
         )
         self._client = client
         self.device_info: ER605DeviceInfo | None = None
-        self._ipstats_counter: int = 0
+
+        # Tier 2 (medium) time-based cache
+        self._medium_poll_interval = medium_poll_interval
+        self._medium_last_fetch: float = 0.0
+        self._medium_cache_interfaces: list[ER605InterfaceData] = []
+        self._medium_cache_ipv6: list[ER605Ipv6InterfaceData] = []
+        self._medium_cache_uptime: int = 0
+
+        # Tier 3 (slow / ipstats) time-based cache
+        self._ipstats_poll_interval = ipstats_poll_interval  # 0 = disabled
+        self._ipstats_last_fetch: float = 0.0
         self._ipstats_cache: list[ER605IpstatEntry] = []
 
     # ── Setup (called once by __init__.py after coordinator is created) ───────
@@ -93,34 +110,45 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
             raise UpdateFailed(f"Cannot connect to ER605: {err}") from err
 
     async def _fetch_all(self) -> ER605RouterData:
-        t_start = time.monotonic()
+        now = time.monotonic()
 
+        # ── Tier 1: FAST — every poll cycle ──
         sys_raw    = await self._client.get_system_status()
-        iface_raw  = await self._client.get_interfaces()
-        ipv6_raw   = await self._client.get_ipv6_status()
         ports_raw  = await self._client.get_switch_state()
-        time_raw   = await self._client.get_time()
         ifstat_raw = await self._client.get_ifstat()
 
-        # Fetch ipstats only every IPSTATS_POLL_EVERY cycles
-        self._ipstats_counter += 1
-        if self._ipstats_counter >= IPSTATS_POLL_EVERY:
-            self._ipstats_counter = 0
+        # ── Tier 2: MEDIUM — on its own time-based interval ──
+        if now - self._medium_last_fetch >= self._medium_poll_interval:
+            self._medium_last_fetch = now
             try:
-                ipstats_raw = await self._client.get_ipstats()
-                self._ipstats_cache = _parse_ipstats(ipstats_raw)
+                iface_raw  = await self._client.get_interfaces()
+                ipv6_raw   = await self._client.get_ipv6_status()
+                time_raw   = await self._client.get_time()
+                self._medium_cache_interfaces = _parse_interfaces(iface_raw)
+                self._medium_cache_ipv6       = _parse_ipv6(ipv6_raw)
+                self._medium_cache_uptime     = int(time_raw.get("run", 0))
             except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("ipstats fetch failed, using cached data: %s", err)
+                _LOGGER.debug("Medium-tier fetch failed, using cached data: %s", err)
+
+        # ── Tier 3: SLOW — ipstats on its own time-based interval (0 = disabled) ──
+        if self._ipstats_poll_interval > 0:
+            if now - self._ipstats_last_fetch >= self._ipstats_poll_interval:
+                self._ipstats_last_fetch = now
+                try:
+                    ipstats_raw = await self._client.get_ipstats()
+                    self._ipstats_cache = _parse_ipstats(ipstats_raw)
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.debug("ipstats fetch failed, using cached data: %s", err)
 
         return ER605RouterData(
-            uptime_seconds = int(time_raw.get("run", 0)),
+            uptime_seconds = self._medium_cache_uptime,
             system         = _parse_system(sys_raw),
-            interfaces     = _parse_interfaces(iface_raw),
-            ipv6_interfaces= _parse_ipv6(ipv6_raw),
+            interfaces     = self._medium_cache_interfaces,
+            ipv6_interfaces= self._medium_cache_ipv6,
             physical_ports = _parse_ports(ports_raw),
             ifstat         = _parse_ifstat(ifstat_raw),
             ipstats        = self._ipstats_cache,
-            poll_timestamp = t_start,
+            poll_timestamp = now,
         )
 
 

@@ -67,7 +67,6 @@ async def async_setup_entry(
                     key           = f"{ipv6.name.lower()}_ipv6_enabled",
                     name          = f"{ipv6.label} IPv6 Enabled",
                     interface_key = ipv6.name,
-                    entity_registry_enabled_default = False,
                 ),
             )
         )
@@ -83,7 +82,6 @@ async def async_setup_entry(
                     name         = f"Port {port.port} Connected",
                     device_class = BinarySensorDeviceClass.CONNECTIVITY,
                     port_key     = port.port,
-                    entity_registry_enabled_default = False,
                 ),
             )
         )

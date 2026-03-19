@@ -8,7 +8,14 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, Platfor
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 
-from .const import CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
+from .const import (
+    CONF_IPSTATS_POLL_INTERVAL,
+    CONF_MEDIUM_POLL_INTERVAL,
+    CONF_POLL_INTERVAL,
+    DEFAULT_IPSTATS_POLL_INTERVAL,
+    DEFAULT_MEDIUM_POLL_INTERVAL,
+    DEFAULT_POLL_INTERVAL,
+)
 from .coordinator import ER605Coordinator
 from .data import ER605ConfigEntry, ER605RuntimeData
 from .http_client import ER605HttpClient, HttpError, HttpLoginError
@@ -24,10 +31,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ER605ConfigEntry) -> boo
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
     interval = entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
+    medium_interval = entry.options.get(CONF_MEDIUM_POLL_INTERVAL, DEFAULT_MEDIUM_POLL_INTERVAL)
+    ipstats_interval = entry.options.get(CONF_IPSTATS_POLL_INTERVAL, DEFAULT_IPSTATS_POLL_INTERVAL)
 
     client = ER605HttpClient(host, username, password)
 
-    coordinator = ER605Coordinator(hass, client, poll_interval=interval)
+    coordinator = ER605Coordinator(
+        hass, client,
+        poll_interval=interval,
+        medium_poll_interval=medium_interval,
+        ipstats_poll_interval=ipstats_interval,
+    )
 
     try:
         device_info = await coordinator.async_setup()

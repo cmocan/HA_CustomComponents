@@ -125,7 +125,6 @@ async def async_setup_entry(
                     name          = f"{label} Gateway",
                     icon          = "mdi:router-network",
                     interface_key = iface.name,
-                    entity_registry_enabled_default = False,
                 ),
             ),
             ER605WANSensor(
@@ -135,7 +134,6 @@ async def async_setup_entry(
                     name          = f"{label} DNS",
                     icon          = "mdi:dns",
                     interface_key = iface.name,
-                    entity_registry_enabled_default = False,
                 ),
             ),
             ER605IPv6Sensor(
@@ -145,7 +143,6 @@ async def async_setup_entry(
                     name          = f"{label} IPv6 Address",
                     icon          = "mdi:ip-network-outline",
                     interface_key = iface.name,
-                    entity_registry_enabled_default = False,
                 ),
             ),
         ])
@@ -160,7 +157,6 @@ async def async_setup_entry(
                     name     = f"Port {port.port} Speed",
                     icon     = "mdi:ethernet",
                     port_key = port.port,
-                    entity_registry_enabled_default = False,
                 ),
             )
         )
@@ -169,7 +165,6 @@ async def async_setup_entry(
     for stat in coordinator.data.ifstat:
         z      = stat.zone                    # e.g. "WAN1"
         zk     = z.lower()                   # e.g. "wan1"
-        is_wan = z.upper().startswith("WAN")  # enable totals for WAN, disable for LAN
         entities.extend([
             ER605IfstatSensor(
                 coordinator, entry.entry_id,
@@ -208,7 +203,6 @@ async def async_setup_entry(
                     state_class                = SensorStateClass.TOTAL_INCREASING,
                     zone_key   = z,
                     zone_field = "rx_bytes",
-                    entity_registry_enabled_default = is_wan,
                 ),
             ),
             ER605IfstatSensor(
@@ -222,7 +216,6 @@ async def async_setup_entry(
                     state_class                = SensorStateClass.TOTAL_INCREASING,
                     zone_key   = z,
                     zone_field = "tx_bytes",
-                    entity_registry_enabled_default = is_wan,
                 ),
             ),
         ])

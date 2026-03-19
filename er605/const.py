@@ -6,8 +6,8 @@ DOMAIN = "er605"
 CONF_POLL_INTERVAL = "poll_interval"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
-DEFAULT_POLL_INTERVAL = 30   # seconds
-MIN_POLL_INTERVAL     = 10
+DEFAULT_POLL_INTERVAL = 5    # seconds
+MIN_POLL_INTERVAL     = 1
 MAX_POLL_INTERVAL     = 300
 DEFAULT_TIMEOUT       = 10   # seconds per HTTP request
 
@@ -29,8 +29,16 @@ API_IFSTAT        = "admin/ifstat?form=list"
 API_IPSTATS       = "admin/ipstats?form=list"
 
 # ── Polling tunables ───────────────────────────────────────────────────────────
-IPSTATS_POLL_EVERY = 5    # fetch ipstats every N coordinator poll cycles
-IPSTATS_TOP_N      = 20   # max IPs returned in top-N attributes on LAN client sensors
+CONF_MEDIUM_POLL_INTERVAL       = "medium_poll_interval"
+DEFAULT_MEDIUM_POLL_INTERVAL    = 30    # seconds
+MIN_MEDIUM_POLL_INTERVAL        = 5     # seconds
+MAX_MEDIUM_POLL_INTERVAL        = 300   # 5 minutes
+
+CONF_IPSTATS_POLL_INTERVAL    = "ipstats_poll_interval"
+DEFAULT_IPSTATS_POLL_INTERVAL = 150   # seconds (0 = disabled)
+MIN_IPSTATS_POLL_INTERVAL     = 5     # seconds
+MAX_IPSTATS_POLL_INTERVAL     = 86400 # 24 hours
+IPSTATS_TOP_N                 = 20    # max IPs returned in top-N attributes on LAN client sensors
 
 # ── Error codes returned in JSON envelope ─────────────────────────────────────
 EC_OK             = "0"

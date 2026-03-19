@@ -14,10 +14,18 @@ from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
 
 from .const import (
+    CONF_IPSTATS_POLL_INTERVAL,
+    CONF_MEDIUM_POLL_INTERVAL,
     CONF_POLL_INTERVAL,
+    DEFAULT_IPSTATS_POLL_INTERVAL,
+    DEFAULT_MEDIUM_POLL_INTERVAL,
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
+    MAX_IPSTATS_POLL_INTERVAL,
+    MAX_MEDIUM_POLL_INTERVAL,
     MAX_POLL_INTERVAL,
+    MIN_IPSTATS_POLL_INTERVAL,
+    MIN_MEDIUM_POLL_INTERVAL,
     MIN_POLL_INTERVAL,
 )
 from .http_client import ER605HttpClient, HttpError, HttpLoginError
@@ -186,7 +194,7 @@ class ER605ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class ER605OptionsFlow(config_entries.OptionsFlow):
-    """Options flow — only the poll interval."""
+    """Options flow — poll interval and ipstats poll interval."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -197,6 +205,12 @@ class ER605OptionsFlow(config_entries.OptionsFlow):
         current_interval = self.config_entry.options.get(
             CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
         )
+        current_medium = self.config_entry.options.get(
+            CONF_MEDIUM_POLL_INTERVAL, DEFAULT_MEDIUM_POLL_INTERVAL
+        )
+        current_ipstats = self.config_entry.options.get(
+            CONF_IPSTATS_POLL_INTERVAL, DEFAULT_IPSTATS_POLL_INTERVAL
+        )
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
@@ -204,7 +218,15 @@ class ER605OptionsFlow(config_entries.OptionsFlow):
                     vol.Required(CONF_POLL_INTERVAL, default=current_interval): vol.All(
                         vol.Coerce(int),
                         vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL),
-                    )
+                    ),
+                    vol.Required(CONF_MEDIUM_POLL_INTERVAL, default=current_medium): vol.All(
+                        vol.Coerce(int),
+                        vol.Range(min=MIN_MEDIUM_POLL_INTERVAL, max=MAX_MEDIUM_POLL_INTERVAL),
+                    ),
+                    vol.Required(CONF_IPSTATS_POLL_INTERVAL, default=current_ipstats): vol.All(
+                        vol.Coerce(int),
+                        vol.Range(min=0, max=MAX_IPSTATS_POLL_INTERVAL),
+                    ),
                 }
             ),
         )

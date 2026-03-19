@@ -45,10 +45,14 @@
       "init": {
         "title": "TP-Link ER605 Options",
         "data": {
-          "poll_interval": "Poll interval (seconds)"
+          "poll_interval": "Fast poll interval (seconds)",
+          "medium_poll_interval": "Medium poll interval (seconds)",
+          "ipstats_poll_interval": "IP stats poll interval (seconds)"
         },
         "data_description": {
-          "poll_interval": "How often to query the router (10–300 seconds, default 30)."
+          "poll_interval": "Tier 1 — CPU, memory, traffic rates, port state (1–300 s, default 5).",
+          "medium_poll_interval": "Tier 2 — IP addresses, gateway, DNS, IPv6, uptime (5–300 s, default 30).",
+          "ipstats_poll_interval": "Tier 3 — Per-IP client analytics (5–86 400 s, default 150). Set to 0 to disable."
         }
       }
     }

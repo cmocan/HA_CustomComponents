@@ -292,6 +292,10 @@ class ER605HttpClient:
             ) as resp:
                 resp.raise_for_status()
                 return await resp.json(content_type=None)
+        except RuntimeError as err:
+            # aiohttp raises RuntimeError("Session is closed") if the
+            # ClientSession was already torn down (e.g. during reload).
+            raise HttpSessionError(f"Session closed for {url}: {err}") from err
         except aiohttp.ClientResponseError as err:
             raise HttpError(f"HTTP {err.status} for {url}") from err
         except aiohttp.ClientError as err:
