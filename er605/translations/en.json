@@ -1,0 +1,56 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "TP-Link ER605 Setup",
+        "data": {
+          "host":     "Router IP Address",
+          "username": "Username",
+          "password": "Password"
+        },
+        "data_description": {
+          "host":     "Local IP address of the ER605 (e.g. 192.168.0.1)",
+          "username": "Web UI username (default: admin)",
+          "password": "Web UI password"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure TP-Link ER605",
+        "data": {
+          "host":     "Router IP Address",
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate TP-Link ER605",
+        "description": "The credentials for {host} are no longer valid. Enter new credentials.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot reach the router. Check the IP address and that the router is online.",
+      "invalid_auth":   "Invalid username or password."
+    },
+    "abort": {
+      "already_configured": "This router is already configured.",
+      "reauth_successful":  "Re-authentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "TP-Link ER605 Options",
+        "data": {
+          "poll_interval": "Poll interval (seconds)"
+        },
+        "data_description": {
+          "poll_interval": "How often to query the router (10–300 seconds, default 30)."
+        }
+      }
+    }
+  }
+}

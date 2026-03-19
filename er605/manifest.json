@@ -1,0 +1,13 @@
+{
+  "domain": "er605",
+  "name": "TP-Link ER605",
+  "version": "0.1.0",
+  "config_flow": true,
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "single_config_entry": true,
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": [],
+  "documentation": ""
+}
