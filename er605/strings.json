@@ -41,6 +41,9 @@
     }
   },
   "options": {
+    "error": {
+      "invalid_interval": "Value must be 0 (disabled) or at least 5."
+    },
     "step": {
       "init": {
         "title": "TP-Link ER605 Options",

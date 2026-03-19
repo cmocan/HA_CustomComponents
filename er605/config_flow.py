@@ -199,8 +199,17 @@ class ER605OptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
+            # Reject values 1–4 (must be 0 = disabled, or ≥ 5)
+            for key in (CONF_POLL_INTERVAL, CONF_MEDIUM_POLL_INTERVAL, CONF_IPSTATS_POLL_INTERVAL):
+                val = user_input.get(key, 0)
+                if 0 < val < 5:
+                    errors[key] = "invalid_interval"
+                    break
+            if not errors:
+                return self.async_create_entry(data=user_input)
 
         current_interval = self.config_entry.options.get(
             CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
@@ -217,18 +226,19 @@ class ER605OptionsFlow(config_entries.OptionsFlow):
                 {
                     vol.Required(CONF_POLL_INTERVAL, default=current_interval): vol.All(
                         vol.Coerce(int),
-                        _zero_or_range(5, MAX_POLL_INTERVAL),
+                        vol.Range(min=0, max=MAX_POLL_INTERVAL),
                     ),
                     vol.Required(CONF_MEDIUM_POLL_INTERVAL, default=current_medium): vol.All(
                         vol.Coerce(int),
-                        _zero_or_range(5, MAX_MEDIUM_POLL_INTERVAL),
+                        vol.Range(min=0, max=MAX_MEDIUM_POLL_INTERVAL),
                     ),
                     vol.Required(CONF_IPSTATS_POLL_INTERVAL, default=current_ipstats): vol.All(
                         vol.Coerce(int),
-                        _zero_or_range(5, MAX_IPSTATS_POLL_INTERVAL),
+                        vol.Range(min=0, max=MAX_IPSTATS_POLL_INTERVAL),
                     ),
                 }
             ),
+            errors=errors,
         )
 
 
@@ -244,14 +254,3 @@ def _extract_unique_id(ifaces: list[dict]) -> str:
         if iface.get("macaddr"):
             return iface["macaddr"].replace("-", "").lower()
     return ""
-
-
-def _zero_or_range(min_val: int, max_val: int):
-    """Validate: value must be 0 (disabled) or between min_val and max_val."""
-    def _validate(value: int) -> int:
-        if value == 0:
-            return value
-        if min_val <= value <= max_val:
-            return value
-        raise vol.Invalid(f"Must be 0 (disabled) or between {min_val} and {max_val}")
-    return _validate
