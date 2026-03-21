@@ -71,6 +71,7 @@ class ER605IpstatEntry:
     tx_pkts: int            # packets transmitted
     rx_pps: int             # current receive packet rate (pkts/s)
     tx_pps: int             # current transmit packet rate (pkts/s)
+    hostname: str | None = None  # resolved PTR name; None until resolved
 
     @property
     def is_lan(self) -> bool:
@@ -152,6 +153,7 @@ class ER605RouterData:
     ipstats: list[ER605IpstatEntry]             # per-IP traffic stats (slow-polled)
     poll_timestamp: float                        # time.monotonic() at poll start
     wan_policy: str | None = None               # "load_balance" / "failover" / "single" / None
+    external_hosts: dict[str, str] = field(default_factory=dict)  # {ip: hostname} — full resolved cache snapshot at poll time (all external IPs ever seen)
 
     @property
     def wan_interfaces(self) -> list[ER605InterfaceData]:

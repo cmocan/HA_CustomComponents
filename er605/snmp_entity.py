@@ -2,11 +2,24 @@
 """Base entity class for the TP-Link ER605 SNMP integration."""
 from __future__ import annotations
 
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+try:
+    from homeassistant.helpers.device_registry import DeviceInfo
+    from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_SNMP_PORT, DOMAIN
-from .snmp_coordinator import ER605SnmpCoordinator
+    from .const import CONF_SNMP_PORT, DOMAIN
+    from .snmp_coordinator import ER605SnmpCoordinator
+except ImportError:
+    from const import CONF_SNMP_PORT, DOMAIN  # type: ignore[no-redef]
+    from snmp_coordinator import ER605SnmpCoordinator  # type: ignore[no-redef]
+
+    DeviceInfo = dict  # type: ignore[misc,assignment]
+
+    class CoordinatorEntity:  # type: ignore[no-redef]
+        def __init__(self, coordinator, *a, **kw):
+            self.coordinator = coordinator
+
+        def __class_getitem__(cls, item):
+            return cls
 
 
 class ER605SnmpEntity(CoordinatorEntity[ER605SnmpCoordinator]):

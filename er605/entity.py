@@ -2,11 +2,24 @@
 
 from __future__ import annotations
 
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+try:
+    from homeassistant.helpers.device_registry import DeviceInfo
+    from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
-from .coordinator import ER605Coordinator
+    from .const import DOMAIN
+    from .coordinator import ER605Coordinator
+except ImportError:
+    from const import DOMAIN  # type: ignore[no-redef]
+    from coordinator import ER605Coordinator  # type: ignore[no-redef]
+
+    DeviceInfo = dict  # type: ignore[misc,assignment]
+
+    class CoordinatorEntity:  # type: ignore[no-redef]
+        def __init__(self, coordinator, *a, **kw):
+            self.coordinator = coordinator
+
+        def __class_getitem__(cls, item):
+            return cls
 
 
 class ER605Entity(CoordinatorEntity[ER605Coordinator]):

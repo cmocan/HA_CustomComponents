@@ -5,29 +5,87 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorEntityDescription,
-    SensorStateClass,
-)
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    PERCENTAGE,
-    UnitOfDataRate,
-    UnitOfInformation,
-    UnitOfTime,
-)
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+try:
+    from homeassistant.components.sensor import (
+        SensorDeviceClass,
+        SensorEntity,
+        SensorEntityDescription,
+        SensorStateClass,
+    )
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.const import (
+        PERCENTAGE,
+        UnitOfDataRate,
+        UnitOfInformation,
+        UnitOfTime,
+    )
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import IPSTATS_TOP_N
-from .coordinator import ER605Coordinator
-from .data import ER605IfstatEntry, ER605IpstatEntry, ER605RouterData, ER605RuntimeData
-from .entity import ER605Entity
-from .snmp_coordinator import ER605SnmpCoordinator, build_wan_stubs
-from .snmp_data import SnmpRouterData, SnmpWanData
-from .snmp_entity import ER605SnmpEntity
+    from .const import IPSTATS_TOP_N
+    from .coordinator import ER605Coordinator
+    from .data import ER605IfstatEntry, ER605IpstatEntry, ER605RouterData, ER605RuntimeData
+    from .dns_resolver import _is_private
+    from .entity import ER605Entity
+    from .snmp_coordinator import ER605SnmpCoordinator, build_wan_stubs
+    from .snmp_data import SnmpRouterData, SnmpWanData
+    from .snmp_entity import ER605SnmpEntity
+except ImportError:
+    from const import IPSTATS_TOP_N  # type: ignore[no-redef]
+    from coordinator import ER605Coordinator  # type: ignore[no-redef]
+    from data import ER605IfstatEntry, ER605IpstatEntry, ER605RouterData, ER605RuntimeData  # type: ignore[no-redef]
+    from entity import ER605Entity  # type: ignore[no-redef]
+    from snmp_coordinator import ER605SnmpCoordinator, build_wan_stubs  # type: ignore[no-redef]
+    from snmp_data import SnmpRouterData, SnmpWanData  # type: ignore[no-redef]
+    from snmp_entity import ER605SnmpEntity  # type: ignore[no-redef]
+    from dns_resolver import _is_private  # type: ignore[no-redef]
+
+    class SensorEntity:  # type: ignore[no-redef]
+        pass
+
+    from dataclasses import dataclass as _dataclass, field as _field
+
+    @_dataclass(frozen=True, kw_only=True)
+    class SensorEntityDescription:  # type: ignore[no-redef]
+        key:  str = ""
+        name: str = ""
+        icon: str | None = None
+        native_unit_of_measurement: object = None
+        device_class: object = None
+        state_class: object = None
+        suggested_display_precision: int | None = None
+        options: list | None = None
+
+    class SensorDeviceClass:  # type: ignore[no-redef]
+        ENUM = "enum"
+        DURATION = "duration"
+        DATA_RATE = "data_rate"
+        DATA_SIZE = "data_size"
+
+    class SensorStateClass:  # type: ignore[no-redef]
+        MEASUREMENT = "measurement"
+        TOTAL_INCREASING = "total_increasing"
+
+    class ConfigEntry:  # type: ignore[no-redef]
+        pass
+
+    class HomeAssistant:  # type: ignore[no-redef]
+        pass
+
+    class AddEntitiesCallback:  # type: ignore[no-redef]
+        pass
+
+    PERCENTAGE = "%"
+
+    class UnitOfDataRate:  # type: ignore[no-redef]
+        KILOBYTES_PER_SECOND = "kB/s"
+        MEGABITS_PER_SECOND  = "Mbit/s"
+
+    class UnitOfInformation:  # type: ignore[no-redef]
+        GIGABYTES = "GB"
+
+    class UnitOfTime:  # type: ignore[no-redef]
+        SECONDS = "s"
 
 PARALLEL_UPDATES = 0
 
@@ -177,6 +235,9 @@ async def async_setup_entry(
     # One WAN Mode sensor per config entry
     entities.append(ER605WanModeSensor(coordinator, entry.entry_id))
 
+    # One Top External Destinations sensor per config entry
+    entities.append(ER605TopExternalDestinationsSensor(coordinator, entry.entry_id))
+
     # Per-physical-port speed sensor (disabled by default)
     for port in coordinator.data.physical_ports:
         entities.append(
@@ -306,10 +367,12 @@ class ER605SystemSensor(ER605Entity, SensorEntity):
 
         pool = pool_fn()
         top = sorted(pool, key=lambda e: e.rx_bps + e.tx_bps, reverse=True)[:IPSTATS_TOP_N]
+        external_hosts = self.coordinator.data.external_hosts
         self._cached_attrs = {
             "clients": [
                 {
                     "addr":     e.addr,
+                    "hostname": external_hosts.get(e.addr) or e.hostname,
                     "rx_bps":   e.rx_bps,
                     "tx_bps":   e.tx_bps,
                     "rx_bytes": e.rx_bytes,
@@ -319,6 +382,7 @@ class ER605SystemSensor(ER605Entity, SensorEntity):
             ],
             "total_clients": len(pool),
             "top_n": IPSTATS_TOP_N,
+            "external_hosts": self.coordinator.data.external_hosts,
         }
         self._cached_gen = gen
         return self._cached_attrs
@@ -513,6 +577,49 @@ class ER605WanModeSensor(ER605Entity, SensorEntity):
     def native_value(self) -> str | None:
         data: ER605RouterData | None = self.coordinator.data
         return data.wan_policy if data else None
+
+
+class ER605TopExternalDestinationsSensor(ER605Entity, SensorEntity):
+    """Top external destinations by traffic (Tier 3, one per config entry)."""
+
+    _attr_icon        = "mdi:earth"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: ER605Coordinator, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id)
+        self._attr_unique_id = f"{entry_id}_top_external_destinations"
+        self._attr_name      = "Top External Destinations"
+
+    @property
+    def native_value(self) -> int | None:
+        """Count of unique external hosts ever resolved."""
+        data: ER605RouterData | None = self.coordinator.data
+        if data is None:
+            return None
+        return len(data.external_hosts)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data: ER605RouterData | None = self.coordinator.data
+        if data is None:
+            return {}
+        external = data.external_hosts
+        candidates = [
+            e for e in data.ipstats
+            if not _is_private(e.addr)
+        ]
+        candidates.sort(key=lambda e: e.rx_bytes + e.tx_bytes, reverse=True)
+        top = candidates[:10]
+        return {
+            "top_destinations": [
+                {
+                    "host":     external.get(e.addr) or e.hostname or e.addr,
+                    "ip":       e.addr,
+                    "total_gb": round((e.rx_bytes + e.tx_bytes) / 1_000_000_000, 3),
+                }
+                for e in top
+            ]
+        }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

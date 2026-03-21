@@ -76,6 +76,7 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
         poll_interval: int = DEFAULT_POLL_INTERVAL,
         medium_poll_interval: int = DEFAULT_MEDIUM_POLL_INTERVAL,
         ipstats_poll_interval: int = DEFAULT_IPSTATS_POLL_INTERVAL,
+        dns_resolver=None,
     ) -> None:
         super().__init__(
             hass,
@@ -104,6 +105,10 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
         # Manual refresh flags — set by service calls, consumed by _fetch_all
         self._force_medium: bool = False
         self._force_ipstats: bool = False
+
+        self._dns_resolver = dns_resolver
+        self.last_new_hosts: list[tuple[str, str]] = []
+        self._cached_external_hosts: dict[str, str] = {}
 
     # ── Setup (called once by __init__.py after coordinator is created) ───────
 
@@ -173,6 +178,7 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
             raise UpdateFailed(f"Cannot connect to ER605: {err}") from err
 
     async def _fetch_all(self) -> ER605RouterData:
+        self.last_new_hosts = []
         now = time.monotonic()
 
         # ── Tier 1: FAST — every poll cycle ──
@@ -218,7 +224,20 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
             self._ipstats_last_fetch = now
             try:
                 ipstats_raw = await self._client.get_ipstats()
-                self._ipstats_cache = _parse_ipstats(ipstats_raw)
+                parsed = _parse_ipstats(ipstats_raw)
+                if self._dns_resolver is not None:
+                    all_addrs = [
+                        e.addr for e in sorted(
+                            parsed, key=lambda e: e.rx_bytes + e.tx_bytes, reverse=True
+                        )
+                    ]
+                    self.last_new_hosts = await self._dns_resolver.resolve_new(
+                        self.hass, all_addrs
+                    )
+                    for entry in parsed:
+                        entry.hostname = self._dns_resolver.get(entry.addr)
+                    self._cached_external_hosts = dict(self._dns_resolver.cache)
+                self._ipstats_cache = parsed
                 self.ipstats_generation += 1
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("ipstats fetch failed, using cached data: %s", err)
@@ -233,6 +252,7 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
             ipstats        = self._ipstats_cache,
             poll_timestamp = now,
             wan_policy     = self._medium_cache_wan_policy,
+            external_hosts = self._cached_external_hosts,
         )
 
 

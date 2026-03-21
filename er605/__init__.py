@@ -54,12 +54,17 @@ async def _async_setup_http(hass: HomeAssistant, entry) -> bool:
     medium_interval  = entry.options.get(CONF_MEDIUM_POLL_INTERVAL, DEFAULT_MEDIUM_POLL_INTERVAL)
     ipstats_interval = entry.options.get(CONF_IPSTATS_POLL_INTERVAL, DEFAULT_IPSTATS_POLL_INTERVAL)
 
+    from .dns_resolver import DnsResolverCache
+    dns_resolver = DnsResolverCache()
+    await dns_resolver.async_load(hass)
+
     client = ER605HttpClient(host, username, password)
     coordinator = ER605Coordinator(
         hass, client,
         poll_interval=interval,
         medium_poll_interval=medium_interval,
         ipstats_poll_interval=ipstats_interval,
+        dns_resolver=dns_resolver,
     )
     try:
         device_info = await coordinator.async_setup()
@@ -72,6 +77,17 @@ async def _async_setup_http(hass: HomeAssistant, entry) -> bool:
 
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = ER605RuntimeData(coordinator=coordinator, device_info=device_info)
+
+    def _on_coordinator_update() -> None:
+        for ip, hostname in coordinator.last_new_hosts:
+            hass.bus.async_fire("er605_new_external_host", {
+                "entry_id": entry.entry_id,
+                "ip":       ip,
+                "hostname": hostname,
+            })
+
+    entry.async_on_unload(coordinator.async_add_listener(_on_coordinator_update))
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _register_services(hass)
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
