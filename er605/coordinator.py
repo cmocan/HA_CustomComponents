@@ -6,28 +6,62 @@ import logging
 import time
 from datetime import timedelta
 
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+try:
+    from homeassistant.core import HomeAssistant
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+    from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+    from .const import (
+        DEFAULT_IPSTATS_POLL_INTERVAL,
+        DEFAULT_MEDIUM_POLL_INTERVAL,
+        DEFAULT_POLL_INTERVAL,
+        DOMAIN,
+    )
+    from .data import (
+        ER605DeviceInfo,
+        ER605IfstatEntry,
+        ER605IpstatEntry,
+        ER605InterfaceData,
+        ER605Ipv6InterfaceData,
+        ER605PhysicalPortData,
+        ER605RouterData,
+        ER605SystemData,
+        ER605WanPortInfo,
+    )
+    from .http_client import ER605HttpClient, HttpError, HttpLoginError, HttpSessionError
+except ImportError:
+    from const import (  # type: ignore[no-redef]
+        DEFAULT_IPSTATS_POLL_INTERVAL,
+        DEFAULT_MEDIUM_POLL_INTERVAL,
+        DEFAULT_POLL_INTERVAL,
+        DOMAIN,
+    )
+    from data import (  # type: ignore[no-redef]
+        ER605DeviceInfo,
+        ER605IfstatEntry,
+        ER605IpstatEntry,
+        ER605InterfaceData,
+        ER605Ipv6InterfaceData,
+        ER605PhysicalPortData,
+        ER605RouterData,
+        ER605SystemData,
+        ER605WanPortInfo,
+    )
+    from http_client import ER605HttpClient, HttpError, HttpLoginError, HttpSessionError  # type: ignore[no-redef]
 
-from .const import (
-    DEFAULT_IPSTATS_POLL_INTERVAL,
-    DEFAULT_MEDIUM_POLL_INTERVAL,
-    DEFAULT_POLL_INTERVAL,
-    DOMAIN,
-)
-from .data import (
-    ER605DeviceInfo,
-    ER605IfstatEntry,
-    ER605IpstatEntry,
-    ER605InterfaceData,
-    ER605Ipv6InterfaceData,
-    ER605PhysicalPortData,
-    ER605RouterData,
-    ER605SystemData,
-    ER605WanPortInfo,
-)
-from .http_client import ER605HttpClient, HttpError, HttpLoginError, HttpSessionError
+    class HomeAssistant:  # type: ignore[no-redef]
+        pass
+
+    class ConfigEntryAuthFailed(Exception):  # type: ignore[no-redef]
+        pass
+
+    class DataUpdateCoordinator:  # type: ignore[no-redef]
+        def __init__(self, *a, **kw):
+            pass
+        def __class_getitem__(cls, item):
+            return cls
+
+    class UpdateFailed(Exception):  # type: ignore[no-redef]
+        pass
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,6 +92,8 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
         self._medium_cache_interfaces: list[ER605InterfaceData] = []
         self._medium_cache_ipv6: list[ER605Ipv6InterfaceData] = []
         self._medium_cache_uptime: int = 0
+        self._medium_cache_wan_policy: str | None = None
+        self._medium_cache_role_by_name: dict[str, str] = {}
 
         # Tier 3 (slow / ipstats) time-based cache
         self._ipstats_poll_interval = ipstats_poll_interval  # 0 = manual only
@@ -152,10 +188,22 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
         if run_medium:
             self._medium_last_fetch = now
             try:
-                iface_raw  = await self._client.get_interfaces()
-                ipv6_raw   = await self._client.get_ipv6_status()
-                time_raw   = await self._client.get_time()
-                self._medium_cache_interfaces = _parse_interfaces(iface_raw)
+                iface_raw    = await self._client.get_interfaces()
+                ipv6_raw     = await self._client.get_ipv6_status()
+                time_raw     = await self._client.get_time()
+                wan_mode_raw = await self._client.get_wan_mode()
+                online_raw   = await self._client.get_online_state()
+                wan_policy, role_by_name = _parse_wan_mode(wan_mode_raw)
+                online_by_name: dict[str, bool] = {
+                    e["interface"]: e.get("state") == "up"
+                    for e in (online_raw if isinstance(online_raw, list) else [])
+                    if "interface" in e
+                }
+                self._medium_cache_wan_policy    = wan_policy
+                self._medium_cache_role_by_name  = role_by_name
+                self._medium_cache_interfaces = _parse_interfaces(
+                    iface_raw, role_by_name, online_by_name
+                )
                 self._medium_cache_ipv6       = _parse_ipv6(ipv6_raw)
                 self._medium_cache_uptime     = int(time_raw.get("run", 0))
             except Exception as err:  # noqa: BLE001
@@ -184,6 +232,7 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
             ifstat         = _parse_ifstat(ifstat_raw),
             ipstats        = self._ipstats_cache,
             poll_timestamp = now,
+            wan_policy     = self._medium_cache_wan_policy,
         )
 
 
@@ -198,17 +247,36 @@ def _parse_system(raw: dict) -> ER605SystemData:
     )
 
 
-def _parse_interfaces(raw: list[dict]) -> list[ER605InterfaceData]:
+def _parse_interfaces(
+    raw: list[dict],
+    role_by_name: dict[str, str] | None = None,
+    online_by_name: dict[str, bool] | None = None,
+) -> list[ER605InterfaceData]:
+    """Parse interface status2 response into ER605InterfaceData objects.
+
+    online_by_name: map of t_name → bool from the separate online?form=state
+    endpoint.  Defaults True for any WAN not present in the map (i.e. when
+    the endpoint has not been called yet or the WAN is not in the response).
+    """
+    if role_by_name is None:
+        role_by_name = {}
     result = []
     for iface in raw:
-        ip  = iface.get("ipaddr") or None
-        gw  = iface.get("gateway") or None
-        dns = iface.get("dns1") or None
-        nm  = iface.get("netmask") or None
+        ip   = iface.get("ipaddr") or None
+        gw   = iface.get("gateway") or None
+        dns  = iface.get("dns1") or None
+        nm   = iface.get("netmask") or None
+        name = iface.get("t_name", "")
+        # Online state comes from admin/online?form=state, not status2.
+        # Default True when the endpoint hasn't been fetched yet.
+        if online_by_name is not None:
+            online = online_by_name.get(name, True)
+        else:
+            online = True
         result.append(ER605InterfaceData(
-            name    = iface.get("t_name", ""),
+            name    = name,
             label   = iface.get("t_label", ""),
-            is_wan  = iface.get("t_name", "").startswith("WAN"),
+            is_wan  = name.startswith("WAN"),
             is_up   = bool(iface.get("t_isup", False)),
             proto   = iface.get("t_proto", ""),
             mac     = iface.get("macaddr", "").replace("-", "").lower(),
@@ -216,6 +284,8 @@ def _parse_interfaces(raw: list[dict]) -> list[ER605InterfaceData]:
             gateway = gw,
             dns1    = dns,
             netmask = nm,
+            online  = online,
+            role    = role_by_name.get(name),
         ))
     return result
 
@@ -289,6 +359,57 @@ def _parse_ifstat(raw: list[dict]) -> list[ER605IfstatEntry]:
             tx_pps   = int(item.get("tx_pps", 0)),
         ))
     return result
+
+
+def _parse_wan_mode(raw: dict) -> tuple[str | None, dict[str, str]]:
+    """Parse a wan_mode API response.
+
+    The real API field is ``wanmode`` (numeric string), not ``mode``.
+    Mapping: "0" = single, "1" = failover, "2" = load_balance.
+    There is no ``primary`` field in the response, so failover roles
+    cannot be determined from this endpoint alone.
+
+    Returns:
+        (wan_policy, role_by_name)
+        wan_policy: "load_balance" | "failover" | "single" | None
+        role_by_name: {"WAN1": "balanced", ...}  (only populated for load_balance)
+    """
+    if not raw:
+        return None, {}
+
+    wanmode = str(raw.get("wanmode", ""))
+    wan_numbers = raw.get("wan_numbers", [])
+    wan_names_raw = raw.get("wan_names", [])
+
+    # Determine policy from numeric wanmode code
+    if not wan_numbers:
+        wan_policy: str | None = None
+    elif len(wan_numbers) == 1:
+        wan_policy = "single"
+    elif wanmode == "1":
+        wan_policy = "failover"
+    elif wanmode == "2":
+        wan_policy = "load_balance"
+    else:
+        wan_policy = None
+
+    # Build index → display_name map
+    index_to_name: dict[str, str] = {
+        p["index"]: p["name"]
+        for p in wan_names_raw
+        if "index" in p and "name" in p
+    }
+
+    # Assign roles — only "balanced" for load_balance.
+    # Failover primary/backup cannot be determined from wanmode endpoint.
+    role_by_name: dict[str, str] = {}
+    if wan_policy == "load_balance":
+        for idx in wan_numbers:
+            name = index_to_name.get(str(idx))
+            if name:
+                role_by_name[name] = "balanced"
+
+    return wan_policy, role_by_name
 
 
 def _build_device_info(

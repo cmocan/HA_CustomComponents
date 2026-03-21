@@ -16,6 +16,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .coordinator import ER605Coordinator
 from .data import ER605RuntimeData
 from .entity import ER605Entity
+from .snmp_coordinator import ER605SnmpCoordinator, build_wan_stubs
+from .snmp_data import SnmpRouterData, SnmpWanData
+from .snmp_entity import ER605SnmpEntity
 
 PARALLEL_UPDATES = 0
 
@@ -37,6 +40,14 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    # SNMP path
+    from .const import PROTOCOL_SNMP
+    if entry.data.get("protocol") == PROTOCOL_SNMP:
+        from .snmp_data import SnmpRuntimeData
+        runtime: SnmpRuntimeData = entry.runtime_data
+        async_add_entities(_build_snmp_binary_sensors(runtime.coordinator, entry.entry_id))
+        return
+    # existing HTTP path unchanged below
     runtime: ER605RuntimeData = entry.runtime_data
     coordinator: ER605Coordinator = runtime.coordinator
 
@@ -78,6 +89,19 @@ async def async_setup_entry(
                     key           = f"{wan_key}_ipv6_enabled",
                     name          = f"{label} IPv6 Enabled",
                     interface_key = wan_name,
+                ),
+            )
+        )
+
+        entities.append(
+            ER605WanOnlineSensor(
+                coordinator,
+                entry.entry_id,
+                ER605BinaryEntityDescription(
+                    key              = f"{wan_key}_online",
+                    name             = f"{label} Online",
+                    device_class     = BinarySensorDeviceClass.CONNECTIVITY,
+                    interface_key    = wan_name,
                 ),
             )
         )
@@ -148,6 +172,34 @@ class ER605IPv6EnabledSensor(ER605Entity, BinarySensorEntity):
         return ipv6.enabled if ipv6 else None
 
 
+class ER605WanOnlineSensor(ER605Entity, BinarySensorEntity):
+    """WAN gateway reachability (online detection) — HTTP only, Tier 2.
+
+    Distinct from ER605WANConnectivitySensor (link state). This reflects
+    whether the ER605 can reach its WAN gateway, not just whether the link
+    is physically connected.
+    """
+
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(
+        self,
+        coordinator: ER605Coordinator,
+        entry_id: str,
+        description: ER605BinaryEntityDescription,
+    ) -> None:
+        super().__init__(coordinator, entry_id)
+        self.entity_description = description
+        self._attr_unique_id = f"{entry_id}_{description.key}"
+
+    @property
+    def is_on(self) -> bool | None:
+        iface = self.coordinator.data.interface(
+            self.entity_description.interface_key
+        ) if self.coordinator.data else None
+        return iface.online if iface else None
+
+
 class ER605PortConnectedSensor(ER605Entity, BinarySensorEntity):
     """Physical switch port link state."""
 
@@ -169,3 +221,95 @@ class ER605PortConnectedSensor(ER605Entity, BinarySensorEntity):
             if port.port == self.entity_description.port_key:
                 return port.connected
         return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SNMP binary sensor entities
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ER605SnmpWanLinkSensor(ER605SnmpEntity, BinarySensorEntity):
+    """WAN link status binary sensor (Tier 1)."""
+
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(
+        self,
+        coordinator: ER605SnmpCoordinator,
+        entry_id: str,
+        wan: SnmpWanData,
+    ) -> None:
+        super().__init__(coordinator, entry_id)
+        self._iface_slug = wan.iface_slug
+        self._attr_unique_id = f"{entry_id}_snmp_wan_{wan.iface_slug}_link"
+        self._attr_name = f"{wan.if_label} Link"
+
+    @property
+    def is_on(self) -> bool | None:
+        data: SnmpRouterData | None = self.coordinator.data
+        if data is None:
+            return None
+        wan = next((w for w in data.wan if w.iface_slug == self._iface_slug), None)
+        return wan.is_up if wan else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data: SnmpRouterData | None = self.coordinator.data
+        if data is None:
+            return {}
+        wan = next((w for w in data.wan if w.iface_slug == self._iface_slug), None)
+        return {"link_speed_mbps": wan.link_speed_mbps} if wan else {}
+
+
+class ER605SnmpPortLinkSensor(ER605SnmpEntity, BinarySensorEntity):
+    """Physical port link status binary sensor (Tier 1)."""
+
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(
+        self,
+        coordinator: ER605SnmpCoordinator,
+        entry_id: str,
+        if_index: int,
+        if_descr: str,
+    ) -> None:
+        super().__init__(coordinator, entry_id)
+        self._if_index = if_index
+        self._attr_unique_id = f"{entry_id}_snmp_port_{if_index}_link"
+        self._attr_name = f"Port {if_descr.split('/')[-1]} Link"
+        self._attr_entity_registry_enabled_default = False  # disabled by default
+
+    @property
+    def is_on(self) -> bool | None:
+        data: SnmpRouterData | None = self.coordinator.data
+        if data is None:
+            return None
+        port = next((p for p in data.ports if p.if_index == self._if_index), None)
+        return port.oper_status == 1 if port else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data: SnmpRouterData | None = self.coordinator.data
+        if data is None:
+            return {}
+        port = next((p for p in data.ports if p.if_index == self._if_index), None)
+        if port is None:
+            return {}
+        return {"admin_enabled": port.admin_status == 1, "iface_name": port.if_descr}
+
+
+def _build_snmp_binary_sensors(
+    coordinator: ER605SnmpCoordinator, entry_id: str
+) -> list[BinarySensorEntity]:
+    """Build all SNMP binary sensor entities."""
+    entities: list = []
+    # WAN link — build stubs from discovery lists (available before first poll)
+    for wan in build_wan_stubs(coordinator):
+        entities.append(ER605SnmpWanLinkSensor(coordinator, entry_id, wan))
+    # Physical ports (discovered at startup — if none found, returns empty list)
+    for idx in coordinator._port_indices:
+        entities.append(
+            ER605SnmpPortLinkSensor(
+                coordinator, entry_id, idx, coordinator._port_descrs.get(idx, str(idx))
+            )
+        )
+    return entities

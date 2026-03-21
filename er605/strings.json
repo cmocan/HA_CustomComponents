@@ -2,7 +2,16 @@
   "config": {
     "step": {
       "user": {
-        "title": "TP-Link ER605 Setup",
+        "title": "TP-Link ER605 — Connection Type",
+        "data": {
+          "protocol": "Connection type"
+        },
+        "data_description": {
+          "protocol": "Choose HTTP to use the router web UI (requires admin password). Choose SNMP to use the standard network management protocol (requires community string)."
+        }
+      },
+      "http": {
+        "title": "TP-Link ER605 — HTTP Setup",
         "data": {
           "host":     "Router IP Address",
           "username": "Username",
@@ -14,12 +23,27 @@
           "password": "Web UI password"
         }
       },
+      "snmp": {
+        "title": "TP-Link ER605 — SNMP Setup",
+        "data": {
+          "host":      "Router IP Address",
+          "community": "Community String",
+          "snmp_port": "SNMP Port"
+        },
+        "data_description": {
+          "host":      "Local IP address of the ER605 (e.g. 192.168.0.1)",
+          "community": "SNMPv2c community string configured on the router",
+          "snmp_port": "UDP port for SNMP (default: 161)"
+        }
+      },
       "reconfigure": {
         "title": "Reconfigure TP-Link ER605",
         "data": {
-          "host":     "Router IP Address",
-          "username": "Username",
-          "password": "Password"
+          "host":      "Router IP Address",
+          "username":  "Username",
+          "password":  "Password",
+          "community": "Community String",
+          "snmp_port": "SNMP Port"
         }
       },
       "reauth_confirm": {
@@ -37,7 +61,8 @@
     },
     "abort": {
       "already_configured": "This router is already configured.",
-      "reauth_successful":  "Re-authentication was successful."
+      "reauth_successful":  "Re-authentication was successful.",
+      "snmp_no_reauth":     "SNMP connections do not use session-based authentication. No re-authentication is needed."
     }
   },
   "options": {
@@ -48,15 +73,33 @@
       "init": {
         "title": "TP-Link ER605 Options",
         "data": {
-          "poll_interval": "Fast poll interval (seconds)",
+          "poll_interval":        "Fast poll interval (seconds)",
           "medium_poll_interval": "Medium poll interval (seconds)",
-          "ipstats_poll_interval": "IP stats poll interval (seconds)"
+          "ipstats_poll_interval": "Slow poll interval (seconds)"
         },
         "data_description": {
-          "poll_interval": "Tier 1 — CPU, memory, traffic rates, port state (5–300 s, default 5). Set to 0 to disable automatic polling.",
-          "medium_poll_interval": "Tier 2 — IP addresses, gateway, DNS, IPv6, uptime (5–300 s, default 30). Set to 0 to disable.",
-          "ipstats_poll_interval": "Tier 3 — Per-IP client analytics (5–86 400 s, default 150). Set to 0 to disable."
+          "poll_interval":         "HTTP: CPU, memory, traffic rates, port state (default 5 s). SNMP: WAN counter rates, link status, memory (default 30 s). Set to 0 to disable.",
+          "medium_poll_interval":  "HTTP: IP addresses, gateway, DNS, uptime (default 30 s). SNMP: WAN IPs, uptime (default 300 s). Set to 0 to disable.",
+          "ipstats_poll_interval": "HTTP: Per-IP client analytics (default 150 s). SNMP: Static data refresh — sysDescr, sysName (default 3600 s). Set to 0 to disable."
         }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "wan_connection_type": {
+        "name": "{wan_name} Connection Type"
+      },
+      "wan_role": {
+        "name": "{wan_name} Role"
+      },
+      "wan_mode": {
+        "name": "WAN Mode"
+      }
+    },
+    "binary_sensor": {
+      "wan_online": {
+        "name": "{wan_name} Online"
       }
     }
   }

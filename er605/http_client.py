@@ -26,23 +26,42 @@ import logging
 
 import aiohttp
 
-from .const import (
-    API_FIRMWARE,
-    API_IFACE_STATUS,
-    API_IFSTAT,
-    API_IPSTATS,
-    API_IPV6_STATUS,
-    API_LOGIN,
-    API_LOCALE,
-    API_ONLINE_STATE,
-    API_SWITCH_STATE,
-    API_SYS_STATUS,
-    API_TIME,
-    API_WAN_MODE,
-    EC_FORM_NOT_FOUND,
-    EC_OK,
-    EC_WRONG_CREDS,
-)
+try:
+    from .const import (
+        API_FIRMWARE,
+        API_IFACE_STATUS,
+        API_IFSTAT,
+        API_IPSTATS,
+        API_IPV6_STATUS,
+        API_LOGIN,
+        API_LOCALE,
+        API_ONLINE_STATE,
+        API_SWITCH_STATE,
+        API_SYS_STATUS,
+        API_TIME,
+        API_WAN_MODE,
+        EC_FORM_NOT_FOUND,
+        EC_OK,
+        EC_WRONG_CREDS,
+    )
+except ImportError:
+    from const import (  # type: ignore[no-redef]
+        API_FIRMWARE,
+        API_IFACE_STATUS,
+        API_IFSTAT,
+        API_IPSTATS,
+        API_IPV6_STATUS,
+        API_LOGIN,
+        API_LOCALE,
+        API_ONLINE_STATE,
+        API_SWITCH_STATE,
+        API_SYS_STATUS,
+        API_TIME,
+        API_WAN_MODE,
+        EC_FORM_NOT_FOUND,
+        EC_OK,
+        EC_WRONG_CREDS,
+    )
 
 _LOGGER = logging.getLogger(__name__)
 

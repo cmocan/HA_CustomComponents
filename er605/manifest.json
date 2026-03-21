@@ -6,7 +6,7 @@
   "integration_type": "device",
   "iot_class": "local_polling",
   "single_config_entry": true,
-  "requirements": [],
+  "requirements": ["pysnmp>=7.1,<8.0"],
   "dependencies": [],
   "codeowners": [],
   "documentation": ""

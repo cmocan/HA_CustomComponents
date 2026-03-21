@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import voluptuous as vol
 
@@ -34,23 +35,32 @@ SERVICE_REFRESH_ALL     = "refresh_all"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ER605ConfigEntry) -> bool:
-    """Set up ER605 from a config entry."""
-    host     = entry.data[CONF_HOST]
-    username = entry.data[CONF_USERNAME]
-    password = entry.data[CONF_PASSWORD]
-    interval = entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
-    medium_interval = entry.options.get(CONF_MEDIUM_POLL_INTERVAL, DEFAULT_MEDIUM_POLL_INTERVAL)
+    """Set up ER605 from a config entry — HTTP or SNMP."""
+    from .const import PROTOCOL_SNMP
+
+    protocol = entry.data.get("protocol", "http")
+
+    if protocol == PROTOCOL_SNMP:
+        return await _async_setup_snmp(hass, entry)
+    return await _async_setup_http(hass, entry)
+
+
+async def _async_setup_http(hass: HomeAssistant, entry) -> bool:
+    """Existing HTTP setup — content moved verbatim from async_setup_entry."""
+    host             = entry.data[CONF_HOST]
+    username         = entry.data[CONF_USERNAME]
+    password         = entry.data[CONF_PASSWORD]
+    interval         = entry.options.get(CONF_POLL_INTERVAL,        DEFAULT_POLL_INTERVAL)
+    medium_interval  = entry.options.get(CONF_MEDIUM_POLL_INTERVAL, DEFAULT_MEDIUM_POLL_INTERVAL)
     ipstats_interval = entry.options.get(CONF_IPSTATS_POLL_INTERVAL, DEFAULT_IPSTATS_POLL_INTERVAL)
 
     client = ER605HttpClient(host, username, password)
-
     coordinator = ER605Coordinator(
         hass, client,
         poll_interval=interval,
         medium_poll_interval=medium_interval,
         ipstats_poll_interval=ipstats_interval,
     )
-
     try:
         device_info = await coordinator.async_setup()
     except ConfigEntryAuthFailed:
@@ -60,21 +70,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: ER605ConfigEntry) -> boo
         await client.async_close()
         raise ConfigEntryNotReady(f"Cannot connect to ER605 at {host}: {err}") from err
 
-    # First data refresh
     await coordinator.async_config_entry_first_refresh()
-
-    entry.runtime_data = ER605RuntimeData(
-        coordinator = coordinator,
-        device_info = device_info,
-    )
-
+    entry.runtime_data = ER605RuntimeData(coordinator=coordinator, device_info=device_info)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Register per-tier manual refresh services (once per domain)
     _register_services(hass)
-
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
+    return True
 
+
+async def _async_setup_snmp(hass: HomeAssistant, entry) -> bool:
+    """SNMP setup — mirrors HTTP setup structure."""
+    from .const import (
+        CONF_COMMUNITY, CONF_SNMP_PORT,
+        DEFAULT_SNMP_MEDIUM_POLL_INTERVAL, DEFAULT_SNMP_POLL_INTERVAL,
+        DEFAULT_SNMP_STATIC_POLL_INTERVAL,
+    )
+    from .snmp_client import ER605SnmpClient, SnmpConnectionError
+    from .snmp_coordinator import ER605SnmpCoordinator
+    from .snmp_data import SnmpRuntimeData
+
+    host      = entry.data[CONF_HOST]
+    community = entry.data[CONF_COMMUNITY]
+    port      = entry.data.get(CONF_SNMP_PORT, 161)
+    interval        = entry.options.get(CONF_POLL_INTERVAL,        DEFAULT_SNMP_POLL_INTERVAL)
+    medium_interval = entry.options.get(CONF_MEDIUM_POLL_INTERVAL, DEFAULT_SNMP_MEDIUM_POLL_INTERVAL)
+    static_interval = entry.options.get(CONF_IPSTATS_POLL_INTERVAL, DEFAULT_SNMP_STATIC_POLL_INTERVAL)
+
+    client = ER605SnmpClient(host=host, port=port, community=community)
+    coordinator = ER605SnmpCoordinator(
+        hass, client,
+        poll_interval=interval,
+        medium_poll_interval=medium_interval,
+        static_poll_interval=static_interval,
+    )
+    try:
+        device_info = await coordinator.async_setup()
+    except SnmpConnectionError as err:
+        raise ConfigEntryNotReady(f"Cannot reach ER605 via SNMP at {host}: {err}") from err
+    except Exception as err:
+        raise ConfigEntryNotReady(f"SNMP setup failed for {host}: {err}") from err
+
+    await coordinator.async_config_entry_first_refresh()
+    entry.runtime_data = SnmpRuntimeData(coordinator=coordinator, device_info=device_info)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _register_services(hass)
+    entry.async_on_unload(entry.add_update_listener(_async_update_options))
     return True
 
 
@@ -82,10 +122,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ER605ConfigEntry) -> bo
     """Unload a config entry."""
     ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if ok:
-        await entry.runtime_data.coordinator._client.async_close()
-    # Remove services when last entry is unloaded
+        from .const import PROTOCOL_HTTP
+        protocol = entry.data.get("protocol", "http")
+        if protocol == PROTOCOL_HTTP:
+            await entry.runtime_data.coordinator._client.async_close()
+        # SNMP coordinator has no separate client close needed (UDP, stateless)
     if not hass.config_entries.async_loaded_entries(DOMAIN):
-        for svc in (SERVICE_REFRESH_FAST, SERVICE_REFRESH_MEDIUM, SERVICE_REFRESH_IPSTATS, SERVICE_REFRESH_ALL):
+        for svc in (SERVICE_REFRESH_FAST, SERVICE_REFRESH_MEDIUM,
+                    SERVICE_REFRESH_IPSTATS, SERVICE_REFRESH_ALL):
             hass.services.async_remove(DOMAIN, svc)
     return ok
 
@@ -99,13 +143,12 @@ async def _async_update_options(
 
 # ── Service registration ──────────────────────────────────────────────────────
 
-def _get_coordinator(hass: HomeAssistant) -> ER605Coordinator:
+def _get_coordinator(hass: HomeAssistant) -> Any:
     """Return the coordinator from the first loaded config entry."""
     entries = hass.config_entries.async_loaded_entries(DOMAIN)
     if not entries:
         raise ValueError("No ER605 config entry loaded")
-    entry: ER605ConfigEntry = entries[0]
-    return entry.runtime_data.coordinator
+    return entries[0].runtime_data.coordinator
 
 
 def _register_services(hass: HomeAssistant) -> None:

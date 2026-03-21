@@ -25,6 +25,9 @@ from .const import IPSTATS_TOP_N
 from .coordinator import ER605Coordinator
 from .data import ER605IfstatEntry, ER605IpstatEntry, ER605RouterData, ER605RuntimeData
 from .entity import ER605Entity
+from .snmp_coordinator import ER605SnmpCoordinator, build_wan_stubs
+from .snmp_data import SnmpRouterData, SnmpWanData
+from .snmp_entity import ER605SnmpEntity
 
 PARALLEL_UPDATES = 0
 
@@ -93,6 +96,14 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    # SNMP path
+    from .const import PROTOCOL_SNMP
+    if entry.data.get("protocol") == PROTOCOL_SNMP:
+        from .snmp_data import SnmpRuntimeData
+        runtime: SnmpRuntimeData = entry.runtime_data
+        async_add_entities(_build_snmp_sensors(runtime.coordinator, entry.entry_id))
+        return
+    # existing HTTP path unchanged below
     runtime: ER605RuntimeData = entry.runtime_data
     coordinator: ER605Coordinator = runtime.coordinator
     dev_info = runtime.device_info
@@ -152,6 +163,19 @@ async def async_setup_entry(
                 ),
             ),
         ])
+        entities.append(
+            ER605WanConnectionTypeSensor(
+                coordinator, entry.entry_id, wan_name, label
+            )
+        )
+        entities.append(
+            ER605WanRoleSensor(
+                coordinator, entry.entry_id, wan_name, label
+            )
+        )
+
+    # One WAN Mode sensor per config entry
+    entities.append(ER605WanModeSensor(coordinator, entry.entry_id))
 
     # Per-physical-port speed sensor (disabled by default)
     for port in coordinator.data.physical_ports:
@@ -204,7 +228,7 @@ async def async_setup_entry(
                     key        = f"ifstat_{zk}_rx_bytes",
                     name       = f"{z} Total Downloaded",
                     icon       = "mdi:download",
-                    native_unit_of_measurement = UnitOfInformation.BYTES,
+                    native_unit_of_measurement = UnitOfInformation.GIGABYTES,
                     device_class               = SensorDeviceClass.DATA_SIZE,
                     state_class                = SensorStateClass.TOTAL_INCREASING,
                     zone_key   = z,
@@ -217,7 +241,7 @@ async def async_setup_entry(
                     key        = f"ifstat_{zk}_tx_bytes",
                     name       = f"{z} Total Uploaded",
                     icon       = "mdi:upload",
-                    native_unit_of_measurement = UnitOfInformation.BYTES,
+                    native_unit_of_measurement = UnitOfInformation.GIGABYTES,
                     device_class               = SensorDeviceClass.DATA_SIZE,
                     state_class                = SensorStateClass.TOTAL_INCREASING,
                     zone_key   = z,
@@ -392,10 +416,288 @@ class ER605IfstatSensor(ER605Entity, SensorEntity):
         self._attr_unique_id = f"{entry_id}_{description.key}"
 
     @property
-    def native_value(self) -> int | None:
+    def native_value(self) -> float | int | None:
         stat: ER605IfstatEntry | None = self.coordinator.data.ifstat_zone(
             self.entity_description.zone_key
         )
         if stat is None:
             return None
-        return getattr(stat, self.entity_description.zone_field, None)
+        val = getattr(stat, self.entity_description.zone_field, None)
+        if val is None:
+            return None
+        # Bytes fields are stored as raw bytes; convert to GB for display.
+        if self.entity_description.zone_field.endswith("_bytes"):
+            return round(val / 1_000_000_000, 3)
+        return val
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HTTP WAN health entities
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class ER605WanConnectionTypeSensor(ER605Entity, SensorEntity):
+    """WAN connection protocol type (dhcp / static / pppoe / …) — HTTP only, Tier 2."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options      = ["dhcp", "static", "pppoe", "l2tp", "pptp", "mobile"]
+
+    def __init__(
+        self,
+        coordinator: ER605Coordinator,
+        entry_id: str,
+        wan_name: str,
+        label: str,
+    ) -> None:
+        super().__init__(coordinator, entry_id)
+        self._wan_name = wan_name
+        self._attr_unique_id = f"{entry_id}_{wan_name.lower()}_connection_type"
+        self._attr_name = f"{label} Connection Type"
+
+    @property
+    def native_value(self) -> str | None:
+        data: ER605RouterData | None = self.coordinator.data
+        if data is None:
+            return None
+        iface = data.interface(self._wan_name)
+        return iface.proto.lower() if iface and iface.proto else None
+
+
+class ER605WanRoleSensor(ER605Entity, SensorEntity):
+    """WAN failover role (primary / backup / balanced) — HTTP only, Tier 2."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options      = ["primary", "backup", "balanced"]
+
+    def __init__(
+        self,
+        coordinator: ER605Coordinator,
+        entry_id: str,
+        wan_name: str,
+        label: str,
+    ) -> None:
+        super().__init__(coordinator, entry_id)
+        self._wan_name = wan_name
+        self._attr_unique_id = f"{entry_id}_{wan_name.lower()}_role"
+        self._attr_name = f"{label} Role"
+
+    @property
+    def native_value(self) -> str | None:
+        data: ER605RouterData | None = self.coordinator.data
+        if data is None:
+            return None
+        iface = data.interface(self._wan_name)
+        return iface.role if iface else None
+
+
+class ER605WanModeSensor(ER605Entity, SensorEntity):
+    """System WAN policy mode (load_balance / failover / single) — HTTP only, Tier 2.
+
+    One entity per config entry (not per WAN).
+    """
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options      = ["load_balance", "failover", "single"]
+    _attr_icon         = "mdi:wan"
+
+    def __init__(
+        self,
+        coordinator: ER605Coordinator,
+        entry_id: str,
+    ) -> None:
+        super().__init__(coordinator, entry_id)
+        self._attr_unique_id = f"{entry_id}_wan_mode"
+        self._attr_name = "WAN Mode"
+
+    @property
+    def native_value(self) -> str | None:
+        data: ER605RouterData | None = self.coordinator.data
+        return data.wan_policy if data else None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SNMP sensor entities
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class ER605SnmpStaticSensor(ER605SnmpEntity, SensorEntity):
+    """Sensor for Tier 3 static data (firmware, hostname)."""
+
+    def __init__(
+        self,
+        coordinator: ER605SnmpCoordinator,
+        entry_id: str,
+        key: str,
+        name: str,
+    ) -> None:
+        super().__init__(coordinator, entry_id)
+        self._key = key
+        self._attr_unique_id = f"{entry_id}_{key}"
+        self._attr_name = name
+        self._attr_icon = "mdi:router-network"
+
+    @property
+    def native_value(self) -> str | None:
+        data: SnmpRouterData | None = self.coordinator.data
+        if data is None:
+            return None
+        mapping = {
+            "firmware": data.sys_descr,
+            "hostname": data.sys_name,
+        }
+        return mapping.get(self._key)
+
+
+class ER605SnmpUptimeSensor(ER605SnmpEntity, SensorEntity):
+    """Uptime sensor (Tier 2)."""
+
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_device_class  = SensorDeviceClass.DURATION
+    _attr_state_class   = SensorStateClass.TOTAL_INCREASING
+    _attr_icon          = "mdi:clock-outline"
+
+    def __init__(self, coordinator: ER605SnmpCoordinator, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id)
+        self._attr_unique_id = f"{entry_id}_snmp_uptime"
+        self._attr_name = "Uptime"
+
+    @property
+    def native_value(self) -> float | None:
+        data: SnmpRouterData | None = self.coordinator.data
+        return data.uptime_seconds if data else None
+
+
+class ER605SnmpWanIpSensor(ER605SnmpEntity, SensorEntity):
+    """WAN IP address sensor (Tier 2)."""
+
+    _attr_icon = "mdi:ip"
+
+    def __init__(
+        self,
+        coordinator: ER605SnmpCoordinator,
+        entry_id: str,
+        wan: SnmpWanData,
+    ) -> None:
+        super().__init__(coordinator, entry_id)
+        self._iface_slug = wan.iface_slug
+        self._attr_unique_id = f"{entry_id}_snmp_wan_{wan.iface_slug}_ip"
+        self._attr_name = f"{wan.if_label} IP"
+
+    @property
+    def native_value(self) -> str | None:
+        data: SnmpRouterData | None = self.coordinator.data
+        if data is None:
+            return None
+        wan = next((w for w in data.wan if w.iface_slug == self._iface_slug), None)
+        return wan.ip if wan else None
+
+
+class ER605SnmpRateSensor(ER605SnmpEntity, SensorEntity):
+    """WAN RX or TX rate sensor in Mbit/s (Tier 1)."""
+
+    _attr_native_unit_of_measurement = UnitOfDataRate.MEGABITS_PER_SECOND
+    _attr_state_class   = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 2
+
+    def __init__(
+        self,
+        coordinator: ER605SnmpCoordinator,
+        entry_id: str,
+        wan: SnmpWanData,
+        direction: str,  # "rx" or "tx"
+    ) -> None:
+        super().__init__(coordinator, entry_id)
+        self._iface_slug = wan.iface_slug
+        self._direction  = direction
+        self._attr_unique_id = f"{entry_id}_snmp_wan_{wan.iface_slug}_{direction}_rate"
+        self._attr_name = f"{wan.if_label} {'Download' if direction == 'rx' else 'Upload'} Rate"
+        self._attr_icon = "mdi:download-network" if direction == "rx" else "mdi:upload-network"
+
+    @property
+    def native_value(self) -> float | None:
+        data: SnmpRouterData | None = self.coordinator.data
+        if data is None:
+            return None
+        wan = next((w for w in data.wan if w.iface_slug == self._iface_slug), None)
+        if wan is None:
+            return None
+        return wan.rx_rate_mbps if self._direction == "rx" else wan.tx_rate_mbps
+
+
+class ER605SnmpBytesSensor(ER605SnmpEntity, SensorEntity):
+    """WAN cumulative bytes sensor (TOTAL_INCREASING, Tier 1).
+
+    Reports the raw ifHCInOctets / ifHCOutOctets 64-bit counter (bytes)
+    converted to gigabytes (÷ 1 000 000 000).  The 64-bit counter tops out
+    at ~18.4 × 10⁹ GB — no float64 overflow possible.
+    """
+
+    _attr_native_unit_of_measurement = UnitOfInformation.GIGABYTES
+    _attr_device_class  = SensorDeviceClass.DATA_SIZE
+    _attr_state_class   = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 3
+
+    def __init__(
+        self,
+        coordinator: ER605SnmpCoordinator,
+        entry_id: str,
+        wan: SnmpWanData,
+        direction: str,
+    ) -> None:
+        super().__init__(coordinator, entry_id)
+        self._iface_slug = wan.iface_slug
+        self._direction  = direction
+        self._attr_unique_id = f"{entry_id}_snmp_wan_{wan.iface_slug}_{direction}_bytes"
+        self._attr_name = f"{wan.if_label} {'Received' if direction == 'rx' else 'Sent'} Bytes"
+
+    @property
+    def native_value(self) -> float | None:
+        data: SnmpRouterData | None = self.coordinator.data
+        if data is None:
+            return None
+        wan = next((w for w in data.wan if w.iface_slug == self._iface_slug), None)
+        if wan is None:
+            return None
+        octets = wan.hc_in_octets if self._direction == "rx" else wan.hc_out_octets
+        return round(octets / 1_000_000_000, 3)
+
+
+class ER605SnmpMemorySensor(ER605SnmpEntity, SensorEntity):
+    """Memory utilization % (Tier 1)."""
+
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class   = SensorStateClass.MEASUREMENT
+    _attr_icon          = "mdi:memory"
+
+    def __init__(self, coordinator: ER605SnmpCoordinator, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id)
+        self._attr_unique_id = f"{entry_id}_snmp_memory_usage"
+        self._attr_name = "Memory Usage"
+
+    @property
+    def native_value(self) -> float | None:
+        data: SnmpRouterData | None = self.coordinator.data
+        return data.memory_pct if data else None
+
+
+def _build_snmp_sensors(
+    coordinator: ER605SnmpCoordinator, entry_id: str
+) -> list[SensorEntity]:
+    """Build all SNMP sensor entities. WAN entities created per discovered WAN."""
+    entities: list = []
+    # Static
+    entities.append(ER605SnmpStaticSensor(coordinator, entry_id, "firmware", "Firmware"))
+    entities.append(ER605SnmpStaticSensor(coordinator, entry_id, "hostname", "Hostname"))
+    # Uptime (Tier 2)
+    entities.append(ER605SnmpUptimeSensor(coordinator, entry_id))
+    # WAN sensors — build stubs from discovery lists (populated by async_setup,
+    # available before the first poll cycle completes)
+    for wan in build_wan_stubs(coordinator):
+        entities.append(ER605SnmpWanIpSensor(coordinator, entry_id, wan))
+        entities.append(ER605SnmpRateSensor(coordinator, entry_id, wan, "rx"))
+        entities.append(ER605SnmpRateSensor(coordinator, entry_id, wan, "tx"))
+        entities.append(ER605SnmpBytesSensor(coordinator, entry_id, wan, "rx"))
+        entities.append(ER605SnmpBytesSensor(coordinator, entry_id, wan, "tx"))
+    # Memory
+    entities.append(ER605SnmpMemorySensor(coordinator, entry_id))
+    return entities

@@ -9,7 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from homeassistant.config_entries import ConfigEntry
+try:
+    from homeassistant.config_entries import ConfigEntry
+except ImportError:
+    class ConfigEntry:  # type: ignore[no-redef]
+        """Stub for test environments without homeassistant installed."""
+        def __class_getitem__(cls, item):
+            return cls
 
 if TYPE_CHECKING:
     from .coordinator import ER605Coordinator
@@ -31,6 +37,8 @@ class ER605InterfaceData:
     gateway: str | None     # gateway
     dns1: str | None        # dns1
     netmask: str | None     # netmask
+    online: bool            # True if WAN online detection confirms gateway reachable
+    role:   str | None      # "primary" / "backup" / "balanced" / None (LAN interfaces)
 
     @property
     def entity_key(self) -> str:
@@ -143,6 +151,7 @@ class ER605RouterData:
     ifstat: list[ER605IfstatEntry]               # per-zone traffic stats
     ipstats: list[ER605IpstatEntry]             # per-IP traffic stats (slow-polled)
     poll_timestamp: float                        # time.monotonic() at poll start
+    wan_policy: str | None = None               # "load_balance" / "failover" / "single" / None
 
     @property
     def wan_interfaces(self) -> list[ER605InterfaceData]:
@@ -194,4 +203,8 @@ class ER605RuntimeData:
 
 # ── Type alias ────────────────────────────────────────────────────────────────
 
-ER605ConfigEntry = ConfigEntry[ER605RuntimeData]
+try:
+    ER605ConfigEntry = ConfigEntry[ER605RuntimeData]
+except TypeError:
+    # Older HA versions where ConfigEntry is not generic at runtime
+    ER605ConfigEntry = ConfigEntry  # type: ignore[assignment, misc]
