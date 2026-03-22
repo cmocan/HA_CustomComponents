@@ -75,12 +75,16 @@
         "data": {
           "poll_interval":        "Fast poll interval (seconds)",
           "medium_poll_interval": "Medium poll interval (seconds)",
-          "ipstats_poll_interval": "Slow poll interval (seconds)"
+          "ipstats_poll_interval": "Slow poll interval (seconds)",
+          "enable_ipstats":       "Enable IP statistics",
+          "enable_dns_resolving": "Enable hostname resolving"
         },
         "data_description": {
           "poll_interval":         "HTTP: CPU, memory, traffic rates, port state (default 5 s). SNMP: WAN counter rates, link status, memory (default 30 s). Set to 0 to disable.",
           "medium_poll_interval":  "HTTP: IP addresses, gateway, DNS, uptime (default 30 s). SNMP: WAN IPs, uptime (default 300 s). Set to 0 to disable.",
-          "ipstats_poll_interval": "HTTP: Per-IP client analytics (default 150 s). SNMP: Static data refresh — sysDescr, sysName (default 3600 s). Set to 0 to disable."
+          "ipstats_poll_interval": "HTTP: Per-IP client analytics (default 150 s). SNMP: Static data refresh — sysDescr, sysName (default 3600 s). Set to 0 to disable.",
+          "enable_ipstats":       "Collect per-IP traffic statistics (LAN client analytics). Disabled by default to reduce memory usage. The interval setting below is ignored when disabled.",
+          "enable_dns_resolving": "Resolve external IP addresses to hostnames via reverse DNS. Only applies when IP statistics are enabled. Disabled by default to reduce memory usage. The existing hostname cache is kept on disk and will be used again if both this and IP statistics are re-enabled."
         }
       }
     }

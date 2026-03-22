@@ -40,6 +40,12 @@ MIN_IPSTATS_POLL_INTERVAL     = 5     # seconds
 MAX_IPSTATS_POLL_INTERVAL     = 86400 # 24 hours
 IPSTATS_TOP_N                 = 20    # max IPs returned in top-N attributes on LAN client sensors
 
+# ── Feature flags (opt-in) ────────────────────────────────────────────────────
+CONF_ENABLE_IPSTATS          = "enable_ipstats"
+CONF_ENABLE_DNS_RESOLVING    = "enable_dns_resolving"
+DEFAULT_ENABLE_IPSTATS       = False
+DEFAULT_ENABLE_DNS_RESOLVING = False
+
 # ── Error codes returned in JSON envelope ─────────────────────────────────────
 EC_OK             = "0"
 EC_WRONG_CREDS    = "700"   # wrong username/password → ConfigEntryAuthFailed

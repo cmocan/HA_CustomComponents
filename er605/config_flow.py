@@ -14,11 +14,15 @@ import homeassistant.helpers.config_validation as cv
 
 from .const import (
     CONF_COMMUNITY,
+    CONF_ENABLE_DNS_RESOLVING,
+    CONF_ENABLE_IPSTATS,
     CONF_IPSTATS_POLL_INTERVAL,
     CONF_MEDIUM_POLL_INTERVAL,
     CONF_POLL_INTERVAL,
     CONF_PROTOCOL,
     CONF_SNMP_PORT,
+    DEFAULT_ENABLE_DNS_RESOLVING,
+    DEFAULT_ENABLE_IPSTATS,
     DEFAULT_IPSTATS_POLL_INTERVAL,
     DEFAULT_MEDIUM_POLL_INTERVAL,
     DEFAULT_POLL_INTERVAL,
@@ -328,22 +332,27 @@ class ER605OptionsFlow(config_entries.OptionsFlow):
         current_fast   = self.config_entry.options.get(CONF_POLL_INTERVAL,        default_fast)
         current_medium = self.config_entry.options.get(CONF_MEDIUM_POLL_INTERVAL, default_medium)
         current_slow   = self.config_entry.options.get(CONF_IPSTATS_POLL_INTERVAL, default_slow)
+        current_enable_ipstats = self.config_entry.options.get(CONF_ENABLE_IPSTATS,       DEFAULT_ENABLE_IPSTATS)
+        current_enable_dns     = self.config_entry.options.get(CONF_ENABLE_DNS_RESOLVING,  DEFAULT_ENABLE_DNS_RESOLVING)
+
+        schema_dict = {
+            vol.Required(CONF_POLL_INTERVAL, default=current_fast): vol.All(
+                vol.Coerce(int), vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL)
+            ),
+            vol.Required(CONF_MEDIUM_POLL_INTERVAL, default=current_medium): vol.All(
+                vol.Coerce(int), vol.Range(min=MIN_MEDIUM_POLL_INTERVAL, max=MAX_MEDIUM_POLL_INTERVAL)
+            ),
+            vol.Required(CONF_IPSTATS_POLL_INTERVAL, default=current_slow): vol.All(
+                vol.Coerce(int), vol.Range(min=min_slow, max=max_slow)
+            ),
+        }
+        if not is_snmp:
+            schema_dict[vol.Optional(CONF_ENABLE_IPSTATS,       default=current_enable_ipstats)] = bool
+            schema_dict[vol.Optional(CONF_ENABLE_DNS_RESOLVING, default=current_enable_dns)]      = bool
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_POLL_INTERVAL, default=current_fast): vol.All(
-                        vol.Coerce(int), vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL)
-                    ),
-                    vol.Required(CONF_MEDIUM_POLL_INTERVAL, default=current_medium): vol.All(
-                        vol.Coerce(int), vol.Range(min=MIN_MEDIUM_POLL_INTERVAL, max=MAX_MEDIUM_POLL_INTERVAL)
-                    ),
-                    vol.Required(CONF_IPSTATS_POLL_INTERVAL, default=current_slow): vol.All(
-                        vol.Coerce(int), vol.Range(min=min_slow, max=max_slow)
-                    ),
-                }
-            ),
+            data_schema=vol.Schema(schema_dict),
             errors=errors,
         )
 

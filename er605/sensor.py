@@ -22,7 +22,7 @@ try:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-    from .const import IPSTATS_TOP_N
+    from .const import IPSTATS_TOP_N, CONF_ENABLE_IPSTATS, DEFAULT_ENABLE_IPSTATS
     from .coordinator import ER605Coordinator
     from .data import ER605IfstatEntry, ER605IpstatEntry, ER605RouterData, ER605RuntimeData
     from .dns_resolver import _is_private
@@ -31,7 +31,7 @@ try:
     from .snmp_data import SnmpRouterData, SnmpWanData
     from .snmp_entity import ER605SnmpEntity
 except ImportError:
-    from const import IPSTATS_TOP_N  # type: ignore[no-redef]
+    from const import IPSTATS_TOP_N, CONF_ENABLE_IPSTATS, DEFAULT_ENABLE_IPSTATS  # type: ignore[no-redef]
     from coordinator import ER605Coordinator  # type: ignore[no-redef]
     from data import ER605IfstatEntry, ER605IpstatEntry, ER605RouterData, ER605RuntimeData  # type: ignore[no-redef]
     from entity import ER605Entity  # type: ignore[no-redef]
@@ -146,6 +146,8 @@ SYSTEM_SENSORS: tuple[ER605SensorDescription, ...] = (
     ),
 )
 
+IPSTATS_SENSOR_KEYS: frozenset[str] = frozenset({"lan_clients_total", "lan_clients_active"})
+
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -164,12 +166,15 @@ async def async_setup_entry(
     # existing HTTP path unchanged below
     runtime: ER605RuntimeData = entry.runtime_data
     coordinator: ER605Coordinator = runtime.coordinator
+    enable_ipstats = entry.options.get(CONF_ENABLE_IPSTATS, DEFAULT_ENABLE_IPSTATS)
     dev_info = runtime.device_info
 
     entities: list[ER605Entity] = []
 
     # System-wide sensors
     for desc in SYSTEM_SENSORS:
+        if not enable_ipstats and desc.key in IPSTATS_SENSOR_KEYS:
+            continue
         entities.append(ER605SystemSensor(coordinator, entry.entry_id, desc))
 
     # Per-WAN sensors — driven by device_info.wan_ports (stable, always complete)
@@ -236,7 +241,8 @@ async def async_setup_entry(
     entities.append(ER605WanModeSensor(coordinator, entry.entry_id))
 
     # One Top External Destinations sensor per config entry
-    entities.append(ER605TopExternalDestinationsSensor(coordinator, entry.entry_id))
+    if enable_ipstats:
+        entities.append(ER605TopExternalDestinationsSensor(coordinator, entry.entry_id))
 
     # Per-physical-port speed sensor (disabled by default)
     for port in coordinator.data.physical_ports:
@@ -382,7 +388,6 @@ class ER605SystemSensor(ER605Entity, SensorEntity):
             ],
             "total_clients": len(pool),
             "top_n": IPSTATS_TOP_N,
-            "external_hosts": self.coordinator.data.external_hosts,
         }
         self._cached_gen = gen
         return self._cached_attrs
@@ -609,7 +614,7 @@ class ER605TopExternalDestinationsSensor(ER605Entity, SensorEntity):
             if not _is_private(e.addr)
         ]
         candidates.sort(key=lambda e: e.rx_bytes + e.tx_bytes, reverse=True)
-        top = candidates[:10]
+        top = candidates[:20]
         return {
             "top_destinations": [
                 {

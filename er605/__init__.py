@@ -12,9 +12,13 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 
 from .const import (
+    CONF_ENABLE_DNS_RESOLVING,
+    CONF_ENABLE_IPSTATS,
     CONF_IPSTATS_POLL_INTERVAL,
     CONF_MEDIUM_POLL_INTERVAL,
     CONF_POLL_INTERVAL,
+    DEFAULT_ENABLE_DNS_RESOLVING,
+    DEFAULT_ENABLE_IPSTATS,
     DEFAULT_IPSTATS_POLL_INTERVAL,
     DEFAULT_MEDIUM_POLL_INTERVAL,
     DEFAULT_POLL_INTERVAL,
@@ -54,16 +58,21 @@ async def _async_setup_http(hass: HomeAssistant, entry) -> bool:
     medium_interval  = entry.options.get(CONF_MEDIUM_POLL_INTERVAL, DEFAULT_MEDIUM_POLL_INTERVAL)
     ipstats_interval = entry.options.get(CONF_IPSTATS_POLL_INTERVAL, DEFAULT_IPSTATS_POLL_INTERVAL)
 
-    from .dns_resolver import DnsResolverCache
-    dns_resolver = DnsResolverCache()
-    await dns_resolver.async_load(hass)
+    enable_ipstats = entry.options.get(CONF_ENABLE_IPSTATS,       DEFAULT_ENABLE_IPSTATS)
+    enable_dns     = entry.options.get(CONF_ENABLE_DNS_RESOLVING,  DEFAULT_ENABLE_DNS_RESOLVING)
+
+    dns_resolver = None
+    if enable_ipstats and enable_dns:
+        from .dns_resolver import DnsResolverCache
+        dns_resolver = DnsResolverCache()   # __init__(self) -> None
+        await dns_resolver.async_load(hass) # populates self._cache from disk; no-ops silently if file absent
 
     client = ER605HttpClient(host, username, password)
     coordinator = ER605Coordinator(
         hass, client,
         poll_interval=interval,
         medium_poll_interval=medium_interval,
-        ipstats_poll_interval=ipstats_interval,
+        ipstats_poll_interval=ipstats_interval if enable_ipstats else 0,
         dns_resolver=dns_resolver,
     )
     try:
