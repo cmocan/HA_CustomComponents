@@ -30,7 +30,7 @@ from .http_client import ER605HttpClient, HttpError, HttpLoginError
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SELECT]
 
 SERVICE_REFRESH_FAST    = "refresh_fast"
 SERVICE_REFRESH_MEDIUM  = "refresh_medium"

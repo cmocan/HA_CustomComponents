@@ -8,7 +8,7 @@ from datetime import timedelta
 
 try:
     from homeassistant.core import HomeAssistant
-    from homeassistant.exceptions import ConfigEntryAuthFailed
+    from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
     from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
     from .const import (
         DEFAULT_IPSTATS_POLL_INTERVAL,
@@ -63,6 +63,9 @@ except ImportError:
     class UpdateFailed(Exception):  # type: ignore[no-redef]
         pass
 
+    class HomeAssistantError(Exception):  # type: ignore[no-redef]
+        pass
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -95,6 +98,8 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
         self._medium_cache_uptime: int = 0
         self._medium_cache_wan_policy: str | None = None
         self._medium_cache_role_by_name: dict[str, str] = {}
+        self._medium_cache_wan_override: str | None = None
+        self._medium_cache_policy_route_rule_id: str | None = None
 
         # Tier 3 (slow / ipstats) time-based cache
         self._ipstats_poll_interval = ipstats_poll_interval  # 0 = manual only
@@ -167,6 +172,73 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
         self._force_ipstats = True
         await self.async_request_refresh()
 
+    async def async_set_wan_override(self, wan_name: str | None) -> None:
+        """Force all traffic through wan_name (e.g. 'WAN1'), or None to revert to auto.
+
+        Writes/deletes the HA_WAN_OVERRIDE policy route rule on the router.
+        Raises HomeAssistantError on failure.
+        delete_wan_override_rule takes no args — it reads fresh from the router internally.
+        """
+        existing_rule_id = self._medium_cache_policy_route_rule_id
+
+        # ── Revert to auto ────────────────────────────────────────────────
+        if wan_name is None:
+            if existing_rule_id is None:
+                return  # no rule exists — no-op (fast check via cache)
+            # delete_wan_override_rule takes no args — it reads fresh from router internally
+            await self._write_step_with_relogin(
+                self._client.delete_wan_override_rule,
+                label="delete HA_WAN_OVERRIDE rule",
+            )
+            await self.async_refresh_medium()
+            return
+
+        # ── Set a specific WAN ────────────────────────────────────────────
+        if existing_rule_id is not None:
+            await self._write_step_with_relogin(
+                self._client.delete_wan_override_rule,
+                label="delete existing HA_WAN_OVERRIDE rule",
+            )
+
+        try:
+            await self._write_step_with_relogin(
+                self._client.add_wan_override_rule, wan_name,
+                label=f"add HA_WAN_OVERRIDE rule for {wan_name}",
+            )
+        except HomeAssistantError:
+            if existing_rule_id is not None:
+                _LOGGER.warning(
+                    "WAN override partial failure: deleted old rule but failed to add "
+                    "new rule for %s. Router falls back to normal failover.", wan_name
+                )
+            raise
+
+        await self.async_refresh_medium()
+
+    async def _write_step_with_relogin(self, fn, *args, label: str = "") -> None:
+        """Call an async client method with optional args; re-login once on HttpSessionError then retry.
+
+        delete_wan_override_rule takes no args (passes its own fresh GET internally).
+        add_wan_override_rule takes wan_name as the only positional arg.
+        """
+        try:
+            await fn(*args)
+        except HttpSessionError:
+            _LOGGER.debug("Session stale during write (%s), re-logging in", label)
+            await self._login()
+            try:
+                await fn(*args)
+            except (HttpSessionError, HttpError) as err:
+                raise HomeAssistantError(
+                    f"ER605 write failed after re-login ({label}): {err}"
+                ) from err
+        except HttpError as err:
+            raise HomeAssistantError(f"ER605 write failed ({label}): {err}") from err
+        except Exception as err:
+            if isinstance(err, HomeAssistantError):
+                raise
+            raise HomeAssistantError(f"ER605 write failed ({label}): {err}") from err
+
     # ── Internal ──────────────────────────────────────────────────────────────
 
     async def _login(self) -> None:
@@ -215,6 +287,14 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("Medium-tier fetch failed, using cached data: %s", err)
 
+            try:
+                policy_raw = await self._client.get_policy_routes()
+                wan_ov, rule_id = _parse_override_rule(policy_raw)
+                self._medium_cache_wan_override = wan_ov
+                self._medium_cache_policy_route_rule_id = rule_id
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Policy route fetch failed, using cached data: %s", err)
+
         # ── Tier 3: SLOW — ipstats on its own time-based interval (0 = manual only) ──
         run_ipstats = self._force_ipstats
         self._force_ipstats = False
@@ -253,6 +333,7 @@ class ER605Coordinator(DataUpdateCoordinator[ER605RouterData]):
             poll_timestamp = now,
             wan_policy     = self._medium_cache_wan_policy,
             external_hosts = self._cached_external_hosts,
+            wan_override   = self._medium_cache_wan_override,
         )
 
 
@@ -430,6 +511,30 @@ def _parse_wan_mode(raw: dict) -> tuple[str | None, dict[str, str]]:
                 role_by_name[name] = "balanced"
 
     return wan_policy, role_by_name
+
+
+# ── Policy route field names (confirmed from probe 2026-03-22) ───────────────
+_PR_NAME_FIELD  = "name"        # field holding the rule name
+_PR_IFACE_FIELD = "interfaces"  # field holding the outbound interface identifier (plural!)
+_PR_ID_FIELD    = "index"       # field holding the rule ID (integer, 1-based)
+
+_HA_RULE_NAME = "HA_WAN_OVERRIDE"
+
+
+def _parse_override_rule(rules: list[dict]) -> tuple[str | None, str | None]:
+    """Find the HA_WAN_OVERRIDE rule and return (wan_name, rule_id).
+
+    wan_name is the interface identifier as returned by the API (e.g. "WAN1").
+    rule_id is the string representation of the rule's integer index.
+    Returns (None, None) if no override rule exists.
+    Rules with other names are never touched.
+    """
+    for rule in rules:
+        if rule.get(_PR_NAME_FIELD) == _HA_RULE_NAME:
+            wan_name = rule.get(_PR_IFACE_FIELD) or None
+            rule_id  = str(rule.get(_PR_ID_FIELD, "")) or None
+            return wan_name, rule_id
+    return None, None
 
 
 def _build_device_info(

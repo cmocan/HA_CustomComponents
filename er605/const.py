@@ -27,6 +27,7 @@ API_IPV6_STATUS   = "admin/ipv6?form=wanv6_status_info"
 API_TIME          = "admin/time?form=settings"
 API_IFSTAT        = "admin/ifstat?form=list"
 API_IPSTATS       = "admin/ipstats?form=list"
+API_POLICY_ROUTE  = "admin/policy_route?form=policy_route"
 
 # ── Polling tunables ───────────────────────────────────────────────────────────
 CONF_MEDIUM_POLL_INTERVAL       = "medium_poll_interval"
@@ -50,6 +51,7 @@ DEFAULT_ENABLE_DNS_RESOLVING = False
 EC_OK             = "0"
 EC_WRONG_CREDS    = "700"   # wrong username/password → ConfigEntryAuthFailed
 EC_FORM_NOT_FOUND = "1014"  # form does not exist (not a session error)
+EC_NOT_ALLOWED    = "711"   # endpoint not allowed / not accessible
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SNMP protocol constants

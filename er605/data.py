@@ -154,6 +154,7 @@ class ER605RouterData:
     poll_timestamp: float                        # time.monotonic() at poll start
     wan_policy: str | None = None               # "load_balance" / "failover" / "single" / None
     external_hosts: dict[str, str] = field(default_factory=dict)  # {ip: hostname} — full resolved cache snapshot at poll time (all external IPs ever seen)
+    wan_override: str | None = None             # forced active WAN name e.g. "WAN1", or None (no override)
 
     @property
     def wan_interfaces(self) -> list[ER605InterfaceData]:

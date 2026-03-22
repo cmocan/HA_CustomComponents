@@ -36,11 +36,13 @@ try:
         API_LOGIN,
         API_LOCALE,
         API_ONLINE_STATE,
+        API_POLICY_ROUTE,
         API_SWITCH_STATE,
         API_SYS_STATUS,
         API_TIME,
         API_WAN_MODE,
         EC_FORM_NOT_FOUND,
+        EC_NOT_ALLOWED,
         EC_OK,
         EC_WRONG_CREDS,
     )
@@ -54,11 +56,13 @@ except ImportError:
         API_LOGIN,
         API_LOCALE,
         API_ONLINE_STATE,
+        API_POLICY_ROUTE,
         API_SWITCH_STATE,
         API_SYS_STATUS,
         API_TIME,
         API_WAN_MODE,
         EC_FORM_NOT_FOUND,
+        EC_NOT_ALLOWED,
         EC_OK,
         EC_WRONG_CREDS,
     )
@@ -181,6 +185,8 @@ class ER605HttpClient:
             raise HttpLoginError("Router rejected credentials (error_code 700)")
         if ec == EC_FORM_NOT_FOUND:
             raise HttpError(f"Endpoint not found (error_code 1014) for {path}")
+        if ec == EC_NOT_ALLOWED:
+            raise HttpError(f"Router returned 'not allowed' (error_code 711) for {path}")
         if ec != EC_OK:
             raise HttpSessionError(f"Unexpected error_code={ec} for {path} — may be stale session")
 
@@ -228,6 +234,72 @@ class ER605HttpClient:
         body = await self.post(API_IPSTATS, params={})
         result = body.get("result", [])
         return result if isinstance(result, list) else []
+
+    async def get_policy_routes(self) -> list[dict]:
+        """Return the list of policy route rules.
+
+        The router returns result={} (empty dict) when no rules exist.
+        Normalised to [] so callers always get a list.
+        """
+        body = await self.post(API_POLICY_ROUTE)
+        result = body.get("result", [])
+        return result if isinstance(result, list) else []
+
+    async def add_wan_override_rule(self, wan_name: str) -> None:
+        """Write a catch-all policy route rule named HA_WAN_OVERRIDE targeting wan_name.
+
+        Always fetches the current rule list first — params.index must equal the exact
+        current rule count or the router returns error 36002.
+        """
+        rules = await self.get_policy_routes()
+        count = len(rules)  # get_policy_routes already normalises {} → []
+        await self.post(
+            API_POLICY_ROUTE,
+            method="add",
+            params={
+                "index": count,  # router requires int for ADD
+                "old": "add",
+                "new": {
+                    "name": "HA_WAN_OVERRIDE",
+                    "interfaces": wan_name,
+                    "service_type": "ALL",
+                    "src": "ipgroup",
+                    "src_ipgroup": "IPGROUP_ANY",
+                    "dst": "ipgroup",
+                    "dst_ipgroup": "IPGROUP_ANY",
+                    "timeobj": "Any",
+                    "mode": "Priority",
+                    "comment": "",
+                    "index": "",
+                    "state": "on",
+                },
+                "key": "add",
+            },
+        )
+
+    async def delete_wan_override_rule(self) -> None:
+        """Delete the HA_WAN_OVERRIDE policy route rule.
+
+        Always fetches the current rule list first and identifies the rule by name —
+        never relies on a cached index. No-op if the rule is not found.
+        """
+        rules = await self.get_policy_routes()
+        rule = next(
+            (r for r in rules if r.get("name") == "HA_WAN_OVERRIDE"), None
+        )
+        if rule is None:
+            return  # already gone — no-op
+        rule_index = rule.get("index")
+        if rule_index is None:
+            raise HttpError("HA_WAN_OVERRIDE rule has no 'index' field — cannot delete")
+        await self.post(
+            API_POLICY_ROUTE,
+            method="delete",
+            params={
+                "key": f"key-{rule_index}",
+                "index": str(rule_index - 1),  # router requires str (0-based) for DELETE
+            },
+        )
 
     # ── Internal: login helpers ───────────────────────────────────────────────
 
