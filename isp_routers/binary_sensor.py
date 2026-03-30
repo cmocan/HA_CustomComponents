@@ -19,6 +19,12 @@ _STATIC_VALUE_MAP: dict[str, Callable[[RouterData], bool | None]] = {
     "lan_port_2_active": lambda d: next((p.is_active for p in d.lan_ports if p.port_id == 2), None),
     "lan_port_3_active": lambda d: next((p.is_active for p in d.lan_ports if p.port_id == 3), None),
     "lan_port_4_active": lambda d: next((p.is_active for p in d.lan_ports if p.port_id == 4), None),
+    "wifi_enabled":      lambda d: d.wifi_enabled,
+    # Arris: per-band WiFi
+    "wifi_24g_enabled":  lambda d: d.wifi_24g_enabled,
+    "wifi_5g_enabled":   lambda d: d.wifi_5g_enabled,
+    # Arris: cable modem operational
+    "cm_operational":    lambda d: d.cm_operational,
 }
 
 

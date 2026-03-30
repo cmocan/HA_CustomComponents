@@ -27,6 +27,39 @@ _STATIC_VALUE_MAP: dict[str, Callable[[RouterData], object]] = {
     "lan_port_2_speed":        lambda d: next((p.bitrate for p in d.lan_ports if p.port_id == 2), None),
     "lan_port_3_speed":        lambda d: next((p.bitrate for p in d.lan_ports if p.port_id == 3), None),
     "lan_port_4_speed":        lambda d: next((p.bitrate for p in d.lan_ports if p.port_id == 4), None),
+    # WAN secondary DNS
+    "wan_dns2":                lambda d: d.wan_status[0].dns2 if d.wan_status else None,
+    # ZTE: CPU / memory usage
+    "cpu_usage":               lambda d: d.cpu_usage,
+    "mem_usage":               lambda d: d.mem_usage,
+    # ZTE: firewall level
+    "firewall_level":          lambda d: d.firewall_level,
+    # ZTE: LAN port Rx/Tx bytes
+    "lan_port_1_rx_bytes":     lambda d: next((p.rx_bytes for p in d.lan_ports if p.port_id == 1), None),
+    "lan_port_1_tx_bytes":     lambda d: next((p.tx_bytes for p in d.lan_ports if p.port_id == 1), None),
+    "lan_port_2_rx_bytes":     lambda d: next((p.rx_bytes for p in d.lan_ports if p.port_id == 2), None),
+    "lan_port_2_tx_bytes":     lambda d: next((p.tx_bytes for p in d.lan_ports if p.port_id == 2), None),
+    "lan_port_3_rx_bytes":     lambda d: next((p.rx_bytes for p in d.lan_ports if p.port_id == 3), None),
+    "lan_port_3_tx_bytes":     lambda d: next((p.tx_bytes for p in d.lan_ports if p.port_id == 3), None),
+    "lan_port_4_rx_bytes":     lambda d: next((p.rx_bytes for p in d.lan_ports if p.port_id == 4), None),
+    "lan_port_4_tx_bytes":     lambda d: next((p.tx_bytes for p in d.lan_ports if p.port_id == 4), None),
+    # Arris: device identity
+    "serial_number":           lambda d: d.serial_number,
+    "hw_version":              lambda d: d.hw_version,
+    "wan_mac":                 lambda d: d.wan_mac,
+    "lan_mac":                 lambda d: d.lan_mac,
+    # Arris: WiFi
+    "wifi_24g_ssid":           lambda d: d.wifi_24g_ssid,
+    "wifi_5g_ssid":            lambda d: d.wifi_5g_ssid,
+    "wifi_24g_channel":        lambda d: d.wifi_24g_channel,
+    "wifi_5g_channel":         lambda d: d.wifi_5g_channel,
+    "wifi_24g_bandwidth":      lambda d: d.wifi_24g_bandwidth,
+    "wifi_5g_bandwidth":       lambda d: d.wifi_5g_bandwidth,
+    # Arris: WAN IPv6
+    "wan_ipv6_link_local":     lambda d: d.wan_ipv6_link_local,
+    # Arris: DOCSIS / modem status
+    "docsis_status":           lambda d: d.docsis_status,
+    "gateway_mode":            lambda d: d.gateway_mode,
 }
 
 

@@ -1,6 +1,7 @@
 """DataUpdateCoordinator for the ISP Routers integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -50,24 +51,30 @@ class IspRoutersCoordinator(DataUpdateCoordinator[RouterData]):
         )
         self._client = client
         self.strategy = strategy
+        self.client_lock = asyncio.Lock()
+
+    @property
+    def client(self) -> RouterClient:
+        return self._client
 
     async def _async_update_data(self) -> RouterData:
         """Login → fetch → logout. Always logout in finally."""
-        try:
-            await self._client.async_login()
-            return await self._client.async_fetch_data()
-        except ConfigEntryAuthFailed:
-            raise
-        except AuthError as err:
-            raise ConfigEntryAuthFailed(str(err)) from err
-        except FetchError as err:
-            raise UpdateFailed(str(err)) from err
-        except Exception as err:
-            raise UpdateFailed(
-                f"Unexpected error from {self.strategy.display_name}: {err}"
-            ) from err
-        finally:
-            await self._client.async_logout()   # no-op if login never succeeded
+        async with self.client_lock:
+            try:
+                await self._client.async_login()
+                return await self._client.async_fetch_data()
+            except ConfigEntryAuthFailed:
+                raise
+            except AuthError as err:
+                raise ConfigEntryAuthFailed(str(err)) from err
+            except FetchError as err:
+                raise UpdateFailed(str(err)) from err
+            except Exception as err:
+                raise UpdateFailed(
+                    f"Unexpected error from {self.strategy.display_name}: {err}"
+                ) from err
+            finally:
+                await self._client.async_logout()   # no-op if login never succeeded
 
     async def async_close(self) -> None:
         """Close the underlying HTTP session."""

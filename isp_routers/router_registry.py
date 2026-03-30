@@ -10,12 +10,17 @@ try:
     from homeassistant.components.binary_sensor import BinarySensorEntityDescription
     from homeassistant.components.sensor import SensorEntityDescription
 except ImportError:
-    @dataclass
     class SensorEntityDescription:  # type: ignore[no-redef]
-        key: str = ""
-    @dataclass
+        def __init__(self, key: str = "", **kwargs) -> None:
+            self.key = key
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
     class BinarySensorEntityDescription:  # type: ignore[no-redef]
-        key: str = ""
+        def __init__(self, key: str = "", **kwargs) -> None:
+            self.key = key
+            for k, v in kwargs.items():
+                setattr(self, k, v)
 
 if TYPE_CHECKING:
     from .data import DslChannel, RouterData

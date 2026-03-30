@@ -46,6 +46,8 @@ class LanPort:
     port_id: int        # 1-based
     is_active: bool
     bitrate: str | None  # e.g. "1 Gbps"; None when inactive
+    rx_bytes: int | None = None  # cumulative bytes received since boot
+    tx_bytes: int | None = None  # cumulative bytes transmitted since boot
 
 
 @dataclass
@@ -76,6 +78,28 @@ class RouterData:
     lan_ports: list[LanPort] = field(default_factory=list)
     docsis_channels: list[DslChannel] = field(default_factory=list)
     voip_lines: int | None = None
+    serial_number: str | None = None
+    hw_version: str | None = None
+    wan_mac: str | None = None
+    lan_mac: str | None = None
+    wifi_24g_enabled: bool | None = None
+    wifi_5g_enabled: bool | None = None
+    wifi_24g_ssid: str | None = None
+    wifi_5g_ssid: str | None = None
+    wifi_24g_channel: str | None = None
+    wifi_5g_channel: str | None = None
+    wifi_24g_bandwidth: str | None = None
+    wifi_5g_bandwidth: str | None = None
+    wan_ipv6_link_local: str | None = None
+    docsis_status: str | None = None        # e.g. "DOCSIS Online"
+    gateway_mode: str | None = None         # e.g. "Ipv4"
+    cm_operational: bool | None = None      # True when cable modem is operational
+
+    # ── ZTE-specific ─────────────────────────────────────────────────────
+    cpu_usage: int | None = None        # primary core usage, percent
+    mem_usage: int | None = None        # memory usage, percent
+    firewall_level: str | None = None   # "Low" / "Middle" / "High"
+    wifi_enabled: bool | None = None    # True if any radio is on
 
     # ── Internal bookkeeping — never expose in entity state/attributes ───
     poll_monotonic: float = 0.0   # time.monotonic() at fetch completion

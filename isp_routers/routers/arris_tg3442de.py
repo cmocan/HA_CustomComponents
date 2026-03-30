@@ -70,6 +70,8 @@ class ArrisClient(RouterClient):
         super().__init__(host, username, password, **kwargs)
         self._csrf_nonce: str = ""
         self._session: aiohttp.ClientSession | None = None
+        self._key: bytes = b""
+        self._iv: bytes = b""
 
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -111,7 +113,7 @@ class ArrisClient(RouterClient):
           - CookieJar(unsafe=True) is required for IP-address cookie acceptance
         """
         session = self._get_session()
-        timeout = aiohttp.ClientTimeout(total=15)
+        timeout = aiohttp.ClientTimeout(total=30)
         nonce = self._nonce()
 
         # Step 1: GET / — get PHPSESSID cookie and extract IV, salt, session_id
@@ -151,6 +153,8 @@ class ArrisClient(RouterClient):
         # Step 3: Derive key, encrypt password payload
         # Plaintext is the exact JS string: '{"Password": "<pwd>", "Nonce": "<sid>"}'
         key = _pbkdf2_key(self._password, salt)
+        self._key = key
+        self._iv = iv
         plaintext = (
             '{"Password": "' + self._password + '", "Nonce": "' + session_id + '"}'
         ).encode()
@@ -185,15 +189,198 @@ class ArrisClient(RouterClient):
         except Exception as exc:
             raise FetchError(f"Arris: could not decrypt csrf_nonce: {exc}") from exc
 
-        # Step 6: GET / with new PHPSESSID — browser always does this to activate the session
+        # Step 6: POST ajaxSet_Session.php to establish session (required before any data requests)
         try:
-            async with session.get(self._url("/"), timeout=timeout) as resp:
+            async with session.post(
+                self._url(f"/php/ajaxSet_Session.php?_n={nonce}"),
+                headers={"csrfNonce": self._csrf_nonce},
+                timeout=timeout,
+            ) as resp:
                 await resp.read()
         except Exception as exc:
-            raise FetchError(f"Arris: session activation GET failed: {exc}") from exc
+            raise FetchError(f"Arris: session POST failed: {exc}") from exc
 
         session.headers.update({"csrfNonce": self._csrf_nonce})
         self._logged_in = True
+
+    async def _post_session(self) -> None:
+        """POST ajaxSet_Session.php (session refresh, required before data operations)."""
+        session = self._get_session()
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with session.post(
+            self._url(f"/php/ajaxSet_Session.php?_n={self._nonce()}"),
+            timeout=timeout,
+        ) as resp:
+            await resp.read()
+
+    async def _get_wifi_data(self, extra_params: str = "") -> dict:
+        """GET wifi_general_data.php, decrypt and return the JSON dict."""
+        session = self._get_session()
+        timeout = aiohttp.ClientTimeout(total=30)
+        url = self._url(f"/php/wifi_general_data.php?_n={self._nonce()}{extra_params}")
+        async with session.get(url, timeout=timeout) as resp:
+            resp.raise_for_status()
+            wifi_resp = await resp.json(content_type=None)
+        enc_wifi = wifi_resp.get("wifidata", "")
+        if not enc_wifi:
+            raise FetchError("Arris: wifi_general_data.php returned no wifidata")
+        wifi_json = _aes_ccm_decrypt(
+            self._key, self._iv, b"wifidata", binascii.unhexlify(enc_wifi)
+        )
+        return json.loads(wifi_json.decode())
+
+    @staticmethod
+    def _build_wifi_payload(wifi_data: dict, overrides: dict) -> dict:
+        """Build the full WiFi SET payload from current router state plus caller overrides.
+
+        wifi_data: decrypted dict from wifi_general_data.php (current router config).
+        overrides: router field name → new value (only fields the caller wants to change).
+
+        Returns a dict ready for JSON-encoding and AES-CCM encryption.
+        Bool values in overrides are normalised to 0/1 integers.
+        Passphrases that match the router's DefaultKeyPassphrase* fields are stripped
+        (the browser does this; sending the default causes the router to reject the write).
+
+        Note: the `Enable`/`Enable5G` fields carry band-specific enable state; callers
+        that implement a master toggle must conditionally include these in `overrides`
+        only when `SplitSSIDEnable` is true (see `async_set_wifi_enabled`).
+        """
+        def _int(val) -> int:
+            return 1 if val else 0
+
+        # Merge: start from current config, apply overrides
+        merged = {**wifi_data, **overrides}
+
+        payload: dict = {
+            "BandSteerEnable":              _int(merged.get("BandSteerEnable")),
+            "SplitSSIDEnable":              _int(merged.get("SplitSSIDEnable")),
+            "Enable":                       _int(merged.get("Enable", 1)),
+            "SSID":                         merged["SSID"],
+            "SSIDAdvertisementEnabled":     _int(merged.get("SSIDAdvertisementEnabled", 1)),
+            "ModeEnabled":                  str(merged.get("ModeEnabled", "4")),
+            "Passphrase":                   merged.get("Passphrase", ""),
+            "Enable5G":                     _int(merged.get("Enable5G", 1)),
+            "SSID5G":                       merged["SSID5G"],
+            "SSIDAdvertisementEnabled5G":   _int(merged.get("SSIDAdvertisementEnabled5G", 1)),
+            "ModeEnabled5G":                str(merged.get("ModeEnabled5G", "4")),
+            "Passphrase5G":                 merged.get("Passphrase5G", ""),
+            "EnableGuest":                  _int(merged.get("EnableGuest")),
+            "SSIDGuest":                    merged.get("SSIDGuest", ""),
+            "ModeEnabledGuest":             str(merged.get("ModeEnabledGuest", "4")),
+            "PassphraseGuest":              merged.get("PassphraseGuest", ""),
+            "IsolationEnabledGuest":        _int(merged.get("IsolationEnabledGuest")),
+            "EnableWiFiFunction":           _int(merged.get("EnableWiFiFunction", 1)),
+        }
+
+        # Strip passphrases that match factory defaults (browser behaviour)
+        if wifi_data.get("DefaultKeyPassphrase") == payload.get("Passphrase"):
+            del payload["Passphrase"]
+        if wifi_data.get("DefaultKeyPassphrase5G") == payload.get("Passphrase5G"):
+            del payload["Passphrase5G"]
+        if wifi_data.get("DefaultKeyPassphraseGuest") == payload.get("PassphraseGuest"):
+            del payload["PassphraseGuest"]
+
+        return payload
+
+    async def async_set_wifi_config(self, overrides: dict, prefetched_wifi_data: dict | None = None) -> None:
+        """Apply partial WiFi config changes in a single read→merge→write cycle.
+
+        overrides: router field name → new value (only fields to change; all others
+        are read from the router's current config and preserved).
+        prefetched_wifi_data: if provided, skip the internal read (steps 1–3) and use
+        this dict as the current config. Caller must have already done a session refresh.
+
+        Caller must: (1) be logged in, (2) hold coordinator.client_lock.
+        The 7-step browser flow is followed exactly when prefetched_wifi_data is None.
+        """
+        if not self._logged_in:
+            raise AuthError("Arris: must be logged in before changing WiFi config")
+        session = self._get_session()
+
+        if prefetched_wifi_data is None:
+            try:
+                # Step 1: session refresh
+                await self._post_session()
+                # Step 2: read current config
+                wifi_data = await self._get_wifi_data()
+                # Step 3: GET with IsManualOperation=false (required browser flow step)
+                await self._get_wifi_data('&{"IsManualOperation":"false"}')
+                # Step 4: session refresh before SET
+                await self._post_session()
+            except Exception as exc:
+                raise FetchError(f"Arris: could not fetch wifi settings: {exc}") from exc
+        else:
+            wifi_data = prefetched_wifi_data
+            # Step 4 only: session refresh before SET (caller did steps 1–3)
+            try:
+                await self._post_session()
+            except Exception as exc:
+                raise FetchError(f"Arris: could not fetch wifi settings: {exc}") from exc
+
+        # Step 5: build payload from current config + overrides, encrypt and POST
+        payload_data = self._build_wifi_payload(wifi_data, overrides)
+        try:
+            pt = json.dumps(payload_data).encode()
+            ct, tag = _aes_ccm_encrypt(self._key, self._iv, b"wifidata", pt)
+            enc_hex = (ct + tag).hex()
+        except Exception as exc:
+            raise FetchError(f"Arris: could not encrypt wifi settings: {exc}") from exc
+
+        post_payload = {"EncryptData": enc_hex, "Name": self._username, "AuthData": "wifidata"}
+        try:
+            # WiFi changes can take 30+ seconds while modem reconfigures radios
+            wifi_timeout = aiohttp.ClientTimeout(total=60)
+            async with session.post(
+                self._url(f"/php/ajaxSet_wifi_general_data.php?_n={self._nonce()}"),
+                json=post_payload,
+                timeout=wifi_timeout,
+            ) as resp:
+                resp.raise_for_status()
+                await resp.read()
+        except Exception as exc:
+            raise FetchError(f"Arris: could not post wifi settings: {exc}") from exc
+
+        # Step 6: session refresh after SET
+        try:
+            await self._post_session()
+        except Exception:
+            pass
+
+        # Step 7: confirm with IsManualOperation=true
+        try:
+            await asyncio.sleep(2)
+            await self._get_wifi_data('&{"IsManualOperation":"true"}')
+        except Exception:
+            pass
+
+    async def async_set_wifi_enabled(self, enabled: bool) -> None:
+        """Enable or disable all WiFi radios (2.4 GHz, 5 GHz, and master toggle).
+
+        Thin wrapper around async_set_wifi_config. Preserves split-SSID semantics:
+        when SplitSSIDEnable is off, only EnableWiFiFunction is toggled (individual
+        band enables stay at 1 so the router doesn't get confused).
+        Caller must be logged in and hold coordinator.client_lock.
+        """
+        if not self._logged_in:
+            raise AuthError("Arris: must be logged in before toggling WiFi")
+
+        # Steps 1–3: session refresh + read current config + IsManualOperation=false GET.
+        # We pass wifi_data to async_set_wifi_config so it skips its own internal re-fetch.
+        try:
+            await self._post_session()
+            wifi_data = await self._get_wifi_data()
+            await self._get_wifi_data('&{"IsManualOperation":"false"}')
+        except Exception as exc:
+            raise FetchError(f"Arris: could not fetch wifi settings: {exc}") from exc
+
+        val = 1 if enabled else 0
+        split_ssid = bool(wifi_data.get("SplitSSIDEnable", False))
+        overrides = {
+            "EnableWiFiFunction": val,
+            "Enable":  val if split_ssid else 1,
+            "Enable5G": val if split_ssid else 1,
+        }
+        await self.async_set_wifi_config(overrides, prefetched_wifi_data=wifi_data)
 
     async def async_logout(self) -> None:
         """POST logout. No-op if never logged in."""
@@ -219,7 +406,7 @@ class ArrisClient(RouterClient):
     async def async_fetch_data(self) -> RouterData:
         """Fetch status, DOCSIS, and overview pages concurrently."""
         session = self._get_session()
-        timeout = aiohttp.ClientTimeout(total=15)
+        timeout = aiohttp.ClientTimeout(total=30)
 
         nonce = self._nonce()
         try:
@@ -245,6 +432,24 @@ class ArrisClient(RouterClient):
         lan_net    = self._parse_js_var(status_html, "js_ipv4LANaddr")
         lan_ports  = self._parse_lan_ports(status_html)
 
+        # New fields — no extra requests needed (already in fetched pages)
+        serial     = self._parse_js_var(status_html, "js_SerialNumber")
+        hw_ver     = self._parse_js_var(status_html, "js_HWTypeVersion")
+        wan_mac    = self._parse_js_var(status_html, "js_WANMACAddress")
+        lan_mac    = self._parse_js_var(status_html, "js_LANMACADDRESS")
+        w24_en_raw = self._parse_js_var(status_html, "js_WLAN24G_Enable")
+        w5g_en_raw = self._parse_js_var(status_html, "js_WLAN5G_Enable")
+        w24_ssid   = self._parse_js_var(status_html, "js_WLAN24G_SSID")
+        w5g_ssid   = self._parse_js_var(status_html, "js_WLAN5G_SSID")
+        w24_ch     = self._parse_js_var(status_html, "js_WLAN24G_Channel")
+        w5g_ch     = self._parse_js_var(status_html, "js_WLAN5G_Channel")
+        w24_bw     = self._parse_js_var(status_html, "js_WLAN24G_BandWidth")
+        w5g_bw     = self._parse_js_var(status_html, "js_WLAN5G_BandWidth")
+        ipv6_ll    = self._parse_js_var(status_html, "js_ipv6addrLinkLocal")
+        docsis_st  = self._parse_js_var(overview_html, "modemConnectionStatus")
+        gw_mode    = self._parse_js_var(overview_html, "gwMode")
+        cm_op_raw  = self._parse_js_var(overview_html, "js_isCmOperational")
+
         return RouterData(
             model="TG3442DE",
             firmware=firmware,
@@ -256,6 +461,22 @@ class ArrisClient(RouterClient):
             lan_ports=lan_ports,
             docsis_channels=self._parse_docsis(docsis_html),
             voip_lines=voip_lines,
+            serial_number=serial,
+            hw_version=hw_ver,
+            wan_mac=wan_mac,
+            lan_mac=lan_mac,
+            wifi_24g_enabled=(w24_en_raw.lower() == "on") if w24_en_raw else None,
+            wifi_5g_enabled=(w5g_en_raw.lower() == "on") if w5g_en_raw else None,
+            wifi_24g_ssid=w24_ssid,
+            wifi_5g_ssid=w5g_ssid,
+            wifi_24g_channel=w24_ch,
+            wifi_5g_channel=w5g_ch,
+            wifi_24g_bandwidth=w24_bw,
+            wifi_5g_bandwidth=w5g_bw,
+            wan_ipv6_link_local=ipv6_ll or None,
+            docsis_status=docsis_st,
+            gateway_mode=gw_mode,
+            cm_operational=(cm_op_raw == "1") if cm_op_raw is not None else None,
             poll_monotonic=time.monotonic(),
         )
 
@@ -427,7 +648,7 @@ class ArrisClient(RouterClient):
     async def async_get_unique_id(self) -> str:
         """Return CM MAC from overview page."""
         session = self._get_session()
-        timeout = aiohttp.ClientTimeout(total=15)
+        timeout = aiohttp.ClientTimeout(total=30)
         try:
             async with session.get(
                 self._url(f"/php/overview_data.php?_n={self._nonce()}"), timeout=timeout
@@ -536,6 +757,75 @@ ARRIS_SENSOR_DESCS: list = [
         name="VoIP Lines",
         icon="mdi:phone",
     ),
+    # Device identity
+    SensorEntityDescription(
+        key="serial_number",
+        name="Serial Number",
+        icon="mdi:barcode",
+    ),
+    SensorEntityDescription(
+        key="hw_version",
+        name="Hardware Version",
+        icon="mdi:chip",
+    ),
+    SensorEntityDescription(
+        key="wan_mac",
+        name="WAN MAC Address",
+        icon="mdi:ethernet",
+    ),
+    SensorEntityDescription(
+        key="lan_mac",
+        name="LAN MAC Address",
+        icon="mdi:ethernet",
+    ),
+    # WiFi
+    SensorEntityDescription(
+        key="wifi_24g_ssid",
+        name="WiFi 2.4GHz SSID",
+        icon="mdi:wifi",
+    ),
+    SensorEntityDescription(
+        key="wifi_5g_ssid",
+        name="WiFi 5GHz SSID",
+        icon="mdi:wifi",
+    ),
+    SensorEntityDescription(
+        key="wifi_24g_channel",
+        name="WiFi 2.4GHz Channel",
+        icon="mdi:wifi-settings",
+    ),
+    SensorEntityDescription(
+        key="wifi_5g_channel",
+        name="WiFi 5GHz Channel",
+        icon="mdi:wifi-settings",
+    ),
+    SensorEntityDescription(
+        key="wifi_24g_bandwidth",
+        name="WiFi 2.4GHz Bandwidth",
+        icon="mdi:wifi-arrow-left-right",
+    ),
+    SensorEntityDescription(
+        key="wifi_5g_bandwidth",
+        name="WiFi 5GHz Bandwidth",
+        icon="mdi:wifi-arrow-left-right",
+    ),
+    # WAN IPv6
+    SensorEntityDescription(
+        key="wan_ipv6_link_local",
+        name="WAN IPv6 Link-Local",
+        icon="mdi:ip-network",
+    ),
+    # DOCSIS / modem status
+    SensorEntityDescription(
+        key="docsis_status",
+        name="DOCSIS Status",
+        icon="mdi:cable-data",
+    ),
+    SensorEntityDescription(
+        key="gateway_mode",
+        name="Gateway Mode",
+        icon="mdi:router-network",
+    ),
 ]
 
 ARRIS_BINARY_SENSOR_DESCS: list = [
@@ -568,6 +858,21 @@ ARRIS_BINARY_SENSOR_DESCS: list = [
         key="lan_port_4_active",
         name="LAN Port 4",
         device_class="plug",
+    ),
+    BinarySensorEntityDescription(
+        key="wifi_24g_enabled",
+        name="WiFi 2.4GHz",
+        device_class="connectivity",
+    ),
+    BinarySensorEntityDescription(
+        key="wifi_5g_enabled",
+        name="WiFi 5GHz",
+        device_class="connectivity",
+    ),
+    BinarySensorEntityDescription(
+        key="cm_operational",
+        name="Cable Modem Operational",
+        device_class="connectivity",
     ),
 ]
 

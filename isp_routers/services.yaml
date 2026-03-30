@@ -1,0 +1,324 @@
+configure_wifi_arris:
+  name: Configure WiFi (Arris)
+  description: >
+    Change one or more WiFi settings on an Arris TG3442DE router in a single
+    write operation. All fields are optional — unspecified fields keep their
+    current values. The write takes up to 60 seconds.
+  target:
+    device:
+      integration: isp_routers
+  fields:
+    enable_wifi:
+      name: Enable WiFi (master)
+      description: Master WiFi on/off switch. Disabling this turns off all radios.
+      required: false
+      selector:
+        boolean:
+    enable_24g:
+      name: Enable 2.4 GHz
+      description: Enable or disable the 2.4 GHz radio independently.
+      required: false
+      selector:
+        boolean:
+    ssid_24g:
+      name: SSID (2.4 GHz)
+      description: Network name for the 2.4 GHz radio.
+      required: false
+      selector:
+        text:
+    passphrase_24g:
+      name: Passphrase (2.4 GHz)
+      description: WPA passphrase for the 2.4 GHz radio.
+      required: false
+      selector:
+        text:
+    ssid_broadcast_24g:
+      name: Broadcast SSID (2.4 GHz)
+      description: Whether to broadcast the 2.4 GHz SSID (visible to clients).
+      required: false
+      selector:
+        boolean:
+    mode_24g:
+      name: WiFi mode (2.4 GHz)
+      description: "802.11 mode. Known values: 1=b, 2=g, 3=n, 4=auto/mixed."
+      required: false
+      selector:
+        select:
+          options:
+            - "1"
+            - "2"
+            - "3"
+            - "4"
+    enable_5g:
+      name: Enable 5 GHz
+      description: Enable or disable the 5 GHz radio independently.
+      required: false
+      selector:
+        boolean:
+    ssid_5g:
+      name: SSID (5 GHz)
+      description: Network name for the 5 GHz radio.
+      required: false
+      selector:
+        text:
+    passphrase_5g:
+      name: Passphrase (5 GHz)
+      description: WPA passphrase for the 5 GHz radio.
+      required: false
+      selector:
+        text:
+    ssid_broadcast_5g:
+      name: Broadcast SSID (5 GHz)
+      description: Whether to broadcast the 5 GHz SSID.
+      required: false
+      selector:
+        boolean:
+    mode_5g:
+      name: WiFi mode (5 GHz)
+      description: "802.11 mode. Known values: 1=a, 2=n, 3=ac, 4=auto/mixed."
+      required: false
+      selector:
+        select:
+          options:
+            - "1"
+            - "2"
+            - "3"
+            - "4"
+    enable_guest:
+      name: Enable guest network
+      description: Enable or disable the guest WiFi network.
+      required: false
+      selector:
+        boolean:
+    ssid_guest:
+      name: SSID (guest)
+      description: Network name for the guest WiFi.
+      required: false
+      selector:
+        text:
+    passphrase_guest:
+      name: Passphrase (guest)
+      description: WPA passphrase for the guest network.
+      required: false
+      selector:
+        text:
+    guest_isolation:
+      name: Guest client isolation
+      description: Prevent guest clients from communicating with each other.
+      required: false
+      selector:
+        boolean:
+    band_steering:
+      name: Band steering
+      description: Automatically steer capable clients to the 5 GHz band.
+      required: false
+      selector:
+        boolean:
+    split_ssid:
+      name: Split SSID
+      description: Use separate SSID names for 2.4 GHz and 5 GHz.
+      required: false
+      selector:
+        boolean:
+
+configure_wifi_zte:
+  name: Configure WiFi (ZTE)
+  description: >
+    Change one or more WiFi settings on a ZTE F6600R router in a single write
+    operation. All fields are optional — unspecified fields keep their current
+    values. The router has four SSIDs: 1 (2.4 GHz primary), 2 (2.4 GHz
+    secondary), 5 (5 GHz primary), 6 (5 GHz secondary).
+  target:
+    device:
+      integration: isp_routers
+  fields:
+    enable_wifi:
+      name: Enable WiFi (master)
+      description: Master WiFi on/off switch for all radios.
+      required: false
+      selector:
+        boolean:
+    enable_1:
+      name: Enable SSID 1 (2.4 GHz primary)
+      description: Enable or disable the 2.4 GHz primary SSID.
+      required: false
+      selector:
+        boolean:
+    ssid_1:
+      name: SSID 1 (2.4 GHz primary)
+      description: Network name for the 2.4 GHz primary SSID.
+      required: false
+      selector:
+        text:
+    passphrase_1:
+      name: Passphrase SSID 1
+      description: WPA passphrase for the 2.4 GHz primary SSID.
+      required: false
+      selector:
+        text:
+    ssid_broadcast_1:
+      name: Broadcast SSID 1
+      description: Whether to broadcast SSID 1 (visible to clients).
+      required: false
+      selector:
+        boolean:
+    encryption_1:
+      name: Encryption type SSID 1
+      description: Security / encryption mode for SSID 1.
+      required: false
+      selector:
+        select:
+          options:
+            - "No Security"
+            - "WPA2-PSK-AES"
+            - "WPA2-PSK-TKIP"
+            - "WPA2-PSK-TKIP/AES"
+            - "WPA/WPA2-PSK-TKIP"
+            - "WPA/WPA2-PSK-AES"
+            - "WPA/WPA2-PSK-TKIP/AES"
+            - "WPA3-SAE"
+            - "WPA2/WPA3-SAE"
+            - "WPA2-PSK-AES/WPA3-SAE-AES"
+            - "WPA-PSK-TKIP"
+            - "WPA-PSK-AES"
+            - "WPA-PSK-TKIP/AES"
+            - "WEP-OpenSystem"
+            - "WEP-ShareKey"
+    enable_2:
+      name: Enable SSID 2 (2.4 GHz secondary)
+      description: Enable or disable the 2.4 GHz secondary SSID.
+      required: false
+      selector:
+        boolean:
+    ssid_2:
+      name: SSID 2 (2.4 GHz secondary)
+      description: Network name for the 2.4 GHz secondary SSID.
+      required: false
+      selector:
+        text:
+    passphrase_2:
+      name: Passphrase SSID 2
+      description: WPA passphrase for the 2.4 GHz secondary SSID.
+      required: false
+      selector:
+        text:
+    ssid_broadcast_2:
+      name: Broadcast SSID 2
+      description: Whether to broadcast SSID 2 (visible to clients).
+      required: false
+      selector:
+        boolean:
+    encryption_2:
+      name: Encryption type SSID 2
+      description: Security / encryption mode for SSID 2.
+      required: false
+      selector:
+        select:
+          options:
+            - "No Security"
+            - "WPA2-PSK-AES"
+            - "WPA2-PSK-TKIP"
+            - "WPA2-PSK-TKIP/AES"
+            - "WPA/WPA2-PSK-TKIP"
+            - "WPA/WPA2-PSK-AES"
+            - "WPA/WPA2-PSK-TKIP/AES"
+            - "WPA3-SAE"
+            - "WPA2/WPA3-SAE"
+            - "WPA2-PSK-AES/WPA3-SAE-AES"
+            - "WPA-PSK-TKIP"
+            - "WPA-PSK-AES"
+            - "WPA-PSK-TKIP/AES"
+            - "WEP-OpenSystem"
+            - "WEP-ShareKey"
+    enable_5:
+      name: Enable SSID 5 (5 GHz primary)
+      description: Enable or disable the 5 GHz primary SSID.
+      required: false
+      selector:
+        boolean:
+    ssid_5:
+      name: SSID 5 (5 GHz primary)
+      description: Network name for the 5 GHz primary SSID.
+      required: false
+      selector:
+        text:
+    passphrase_5:
+      name: Passphrase SSID 5
+      description: WPA passphrase for the 5 GHz primary SSID.
+      required: false
+      selector:
+        text:
+    ssid_broadcast_5:
+      name: Broadcast SSID 5
+      description: Whether to broadcast SSID 5 (visible to clients).
+      required: false
+      selector:
+        boolean:
+    encryption_5:
+      name: Encryption type SSID 5
+      description: Security / encryption mode for SSID 5.
+      required: false
+      selector:
+        select:
+          options:
+            - "No Security"
+            - "WPA2-PSK-AES"
+            - "WPA2-PSK-TKIP"
+            - "WPA2-PSK-TKIP/AES"
+            - "WPA/WPA2-PSK-TKIP"
+            - "WPA/WPA2-PSK-AES"
+            - "WPA/WPA2-PSK-TKIP/AES"
+            - "WPA3-SAE"
+            - "WPA2/WPA3-SAE"
+            - "WPA2-PSK-AES/WPA3-SAE-AES"
+            - "WPA-PSK-TKIP"
+            - "WPA-PSK-AES"
+            - "WPA-PSK-TKIP/AES"
+            - "WEP-OpenSystem"
+            - "WEP-ShareKey"
+    enable_6:
+      name: Enable SSID 6 (5 GHz secondary)
+      description: Enable or disable the 5 GHz secondary SSID.
+      required: false
+      selector:
+        boolean:
+    ssid_6:
+      name: SSID 6 (5 GHz secondary)
+      description: Network name for the 5 GHz secondary SSID.
+      required: false
+      selector:
+        text:
+    passphrase_6:
+      name: Passphrase SSID 6
+      description: WPA passphrase for the 5 GHz secondary SSID.
+      required: false
+      selector:
+        text:
+    ssid_broadcast_6:
+      name: Broadcast SSID 6
+      description: Whether to broadcast SSID 6 (visible to clients).
+      required: false
+      selector:
+        boolean:
+    encryption_6:
+      name: Encryption type SSID 6
+      description: Security / encryption mode for SSID 6.
+      required: false
+      selector:
+        select:
+          options:
+            - "No Security"
+            - "WPA2-PSK-AES"
+            - "WPA2-PSK-TKIP"
+            - "WPA2-PSK-TKIP/AES"
+            - "WPA/WPA2-PSK-TKIP"
+            - "WPA/WPA2-PSK-AES"
+            - "WPA/WPA2-PSK-TKIP/AES"
+            - "WPA3-SAE"
+            - "WPA2/WPA3-SAE"
+            - "WPA2-PSK-AES/WPA3-SAE-AES"
+            - "WPA-PSK-TKIP"
+            - "WPA-PSK-AES"
+            - "WPA-PSK-TKIP/AES"
+            - "WEP-OpenSystem"
+            - "WEP-ShareKey"
